@@ -1,3 +1,5 @@
 superduperreload-core=={version}
 ipykernel
 ipython
+# TODO: add this once watchman integration is working
+# pywatchman
