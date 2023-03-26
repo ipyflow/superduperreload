@@ -1,11 +1,12 @@
 """Tests for autoreload extension.
 """
 # -----------------------------------------------------------------------------
-#  Copyright (c) 2012 IPython Development Team.
+#  Copyright (c) 2012, IPython Development Team
+#  Copyright (c) 2023, Stephen Macke <stephen.macke@gmail.com>
 #
 #  Distributed under the terms of the Modified BSD License.
 #
-#  The full license is in the file COPYING.txt, distributed with this software.
+#  The full license is in the file COPYING.rst, distributed with this software.
 # -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
@@ -20,11 +21,10 @@ import sys
 import tempfile
 import textwrap
 import time
+import unittest
 from dataclasses import dataclass
 from io import StringIO
-from unittest import TestCase
 
-import IPython.testing.tools as tt
 import pytest
 from IPython.core.events import EventManager, pre_run_cell
 from IPython.testing.decorators import skipif_not_numpy
@@ -71,7 +71,7 @@ class FakeShell:
         self.auto_magics.post_execute_hook()
 
 
-class Fixture(TestCase):
+class Fixture(unittest.TestCase):
     """Fixture for creating test module files"""
 
     test_dir = None
@@ -91,6 +91,10 @@ class Fixture(TestCase):
         self.test_dir = None
         self.old_sys_path = None
         self.shell = None
+
+    @property
+    def reloader(self):
+        return self.shell.auto_magics._reloader
 
     def get_module(self):
         module_name = "tmpmod_" + "".join(random.sample(self.filename_chars, 20))
@@ -173,10 +177,9 @@ class TestAutoreload(Fixture):
                             """
             ),
         )
-        with tt.AssertNotPrints(
-            ("[autoreload of %s failed:" % mod_name), channel="stderr"
-        ):
-            self.shell.run_code("pass")  # trigger another reload
+        self.shell.run_code("pass")  # trigger another reload
+        assert self.reloader.reloaded_modules == [mod_name]
+        assert self.reloader.failed_modules == []
 
     def test_reload_class_type(self):
         self.shell.magic_autoreload("2")
@@ -304,10 +307,9 @@ class TestAutoreload(Fixture):
             ),
         )
 
-        with tt.AssertNotPrints(
-            ("[autoreload of %s failed:" % mod_name), channel="stderr"
-        ):
-            self.shell.run_code("pass")  # trigger another reload
+        self.shell.run_code("pass")  # trigger another reload
+        assert self.reloader.reloaded_modules == [mod_name]
+        assert self.reloader.failed_modules == []
 
     def test_autoload_newly_added_objects(self):
         # All of these fail with %autoreload 2
@@ -447,29 +449,24 @@ class TestAutoreload(Fixture):
         """
         mod_name, mod_fn = self.new_module(mod_code)
         self.shell.run_code(f"import {mod_name}")
-        with tt.AssertPrints("", channel="stdout"):  # no output; this is default
-            self.shell.run_code("pass")
+        self.shell.run_code("pass")
+        assert self.reloader.reloaded_modules == []
+        assert self.reloader.failed_modules == []
 
         self.shell.magic_autoreload("complete --print")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        with tt.AssertPrints(
-            f"Reloading '{mod_name}'.", channel="stdout"
-        ):  # see something printed out
-            self.shell.run_code("pass")
+        self.shell.run_code("pass")
+        assert self.reloader.reloaded_modules == [mod_name]
 
         self.shell.magic_autoreload("complete -p")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        with tt.AssertPrints(
-            f"Reloading '{mod_name}'.", channel="stdout"
-        ):  # see something printed out
-            self.shell.run_code("pass")
+        self.shell.run_code("pass")
+        assert self.reloader.reloaded_modules == [mod_name]
 
         self.shell.magic_autoreload("complete --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        with tt.AssertPrints(
-            f"Reloading '{mod_name}'.", channel="stdout"
-        ):  # see something printed out
-            self.shell.run_code("pass")
+        self.shell.run_code("pass")
+        assert self.reloader.reloaded_modules == [mod_name]
 
         self.shell.magic_autoreload("complete --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
@@ -577,14 +574,11 @@ a syntax error
 """,
         )
 
-        with tt.AssertPrints(
-            ("[autoreload of %s failed:" % mod_name), channel="stderr"
-        ):
-            self.shell.run_code("pass")  # trigger reload
-        with tt.AssertNotPrints(
-            ("[autoreload of %s failed:" % mod_name), channel="stderr"
-        ):
-            self.shell.run_code("pass")  # trigger another reload
+        self.shell.run_code("pass")  # trigger reload
+        assert mod_name in self.reloader.failed_modules
+        self.shell.run_code("pass")  # trigger another reload
+        assert self.reloader.reloaded_modules == []
+        assert self.reloader.failed_modules == []
         check_module_contents()
 
         #

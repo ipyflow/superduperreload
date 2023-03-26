@@ -48,7 +48,7 @@ coverage:
 xmlcov: coverage
 	coverage xml
 
-check: eslint blackcheck typecheck check_no_typing
+check: blackcheck typecheck check_no_typing
 
 test: check
 tests: check

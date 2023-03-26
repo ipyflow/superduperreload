@@ -164,6 +164,9 @@ class ModuleReloader:
         self.modules_mtimes = {}
         self.shell = shell
 
+        self.reloaded_modules = []
+        self.failed_modules = []
+
         # Reporting callable for verbosity
         self._report = lambda msg: None  # by default, be quiet.
 
@@ -236,6 +239,9 @@ class ModuleReloader:
         if not self.enabled and not check_all:
             return
 
+        self.reloaded_modules.clear()
+        self.failed_modules.clear()
+
         if check_all or self.check_all:
             modules = list(sys.modules.keys())
         else:
@@ -271,8 +277,8 @@ class ModuleReloader:
                         superreload(m, reload, self.old_objects, self.shell)
                     else:
                         superreload(m, reload, self.old_objects)
-                    if py_filename in self.failed:
-                        del self.failed[py_filename]
+                    self.failed.pop(py_filename, None)
+                    self.reloaded_modules.append(modname)
                 except:
                     print(
                         "[autoreload of {} failed: {}]".format(
@@ -281,6 +287,7 @@ class ModuleReloader:
                         file=sys.stderr,
                     )
                     self.failed[py_filename] = pymtime
+                    self.failed_modules.append(modname)
 
 
 # ------------------------------------------------------------------------------
