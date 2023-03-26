@@ -1,0 +1,47 @@
+[build-system]
+requires = [
+    'setuptools >= 48',
+    'wheel >= 0.30.0',
+    'setuptools-git-versioning',
+]
+build-backend = 'setuptools.build_meta'
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+extend-exclude = '(^/superduperreload/__init__|^/versioneer|_version)\.py'
+
+[tool.isort]
+profile = 'black'
+extend_skip_glob = [
+    '**/superduperreload/__init__.py',
+    '**/versioneer.py',
+    '**/_version.py',
+    '**/setup.py',
+]
+
+[tool.pytest.ini_options]
+markers = ['integration: mark a test as an integration test.']
+filterwarnings = [
+    'ignore::DeprecationWarning',
+    'ignore::pytest.PytestAssertRewriteWarning',
+]
+
+[tool.coverage.run]
+source = ['superduperreload']
+omit = [
+    'superduperreload/__init__.py',
+    'superduperreload/version.py',
+    'superduperreload/_version.py',
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    'pragma: no cover *$',
+    '^ *if TYPE_CHECKING:',
+    '^ *except',
+    '^ *raise',
+]
