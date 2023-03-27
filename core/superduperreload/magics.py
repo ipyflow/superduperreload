@@ -292,11 +292,3 @@ class AutoreloadMagics(Magics):
                 self._reloader.modules_mtimes[modname] = pymtime
 
         self.loaded_modules.update(newly_loaded_modules)
-
-
-def load_ipython_extension(ip):
-    """Load the extension in IPython."""
-    auto_reload = AutoreloadMagics(ip)
-    ip.register_magics(auto_reload)
-    ip.events.register("pre_run_cell", auto_reload.pre_run_cell)
-    ip.events.register("post_execute", auto_reload.post_execute_hook)
