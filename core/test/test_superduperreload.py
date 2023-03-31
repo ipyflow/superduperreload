@@ -421,11 +421,10 @@ class TestAutoreload(Fixture):
 
         def gather_settings(mode):
             self.shell.magic_autoreload(mode)
-            module_reloader = self.shell.auto_magics._reloader
             return AutoreloadSettings(
-                module_reloader.check_all,
-                module_reloader.enabled,
-                module_reloader.autoload_obj,
+                self.reloader.check_all,
+                self.reloader.enabled,
+                self.reloader.autoload_obj,
             )
 
         assert gather_settings("0") == gather_settings("off")
@@ -440,22 +439,21 @@ class TestAutoreload(Fixture):
 
     def test_aimport_parsing(self):
         # Modules can be included or excluded all in one line.
-        module_reloader = self.shell.auto_magics._reloader
         self.shell.magic_aimport("os")  # import and mark `os` for auto-reload.
-        assert module_reloader.modules["os"] is True
-        assert "os" not in module_reloader.skip_modules.keys()
+        assert "os" in self.reloader.modules
+        assert "os" not in self.reloader.skip_modules
 
         self.shell.magic_aimport("-math")  # forbid autoreloading of `math`
-        assert module_reloader.skip_modules["math"] is True
-        assert "math" not in module_reloader.modules.keys()
+        assert "math" in self.reloader.skip_modules
+        assert "math" not in self.reloader.modules
 
         self.shell.magic_aimport(
             "-os, math"
         )  # Can do this all in one line; wasn't possible before.
-        assert module_reloader.modules["math"] is True
-        assert "math" not in module_reloader.skip_modules.keys()
-        assert module_reloader.skip_modules["os"] is True
-        assert "os" not in module_reloader.modules.keys()
+        assert "math" in self.reloader.modules
+        assert "math" not in self.reloader.skip_modules
+        assert "os" in self.reloader.skip_modules
+        assert "os" not in self.reloader.modules
 
     def test_autoreload_output(self):
         self.shell.magic_autoreload("complete")
@@ -660,7 +658,7 @@ class TestAutoreload(Fixture):
             self.shell.magic_aimport("-" + mod_name)
             stream = StringIO()
             self.shell.magic_aimport("", stream=stream)
-            self.assertTrue(("Modules to skip:\n%s" % mod_name) in stream.getvalue())
+            self.assertTrue(mod_name in stream.getvalue().strip().split())
 
             # This should succeed, although no such module exists
             self.shell.magic_aimport("-tmpmod_as318989e89ds")

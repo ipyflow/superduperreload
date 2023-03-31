@@ -58,7 +58,7 @@ import weakref
 from importlib import import_module, reload
 from importlib.util import source_from_cache
 from types import FunctionType, MethodType
-from typing import Type
+from typing import Set, Type
 
 _ClassCallableTypes = (
     FunctionType,
@@ -84,9 +84,17 @@ class ModuleReloader:
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
         self.failed = {}
         # Modules specially marked as autoreloadable.
-        self.modules = {}
+        self.modules: Set[str] = set()
         # Modules specially marked as not autoreloadable.
-        self.skip_modules = {}
+        self.skip_modules: Set[str] = {
+            "__main__",
+            "__mp_main__",
+            "builtins",
+            "numpy",
+            "os",
+            "pandas",
+            "sys",
+        }
         # (module-name, name) -> weakref, for replacing old code objects
         self.old_objects = {}
         # Module modification timestamps
@@ -104,19 +112,13 @@ class ModuleReloader:
 
     def mark_module_skipped(self, module_name):
         """Skip reloading the named module in the future"""
-        try:
-            del self.modules[module_name]
-        except KeyError:
-            pass
-        self.skip_modules[module_name] = True
+        self.modules.discard(module_name)
+        self.skip_modules.add(module_name)
 
     def mark_module_reloadable(self, module_name):
         """Reload the named module in the future (if it is imported)"""
-        try:
-            del self.skip_modules[module_name]
-        except KeyError:
-            pass
-        self.modules[module_name] = True
+        self.skip_modules.discard(module_name)
+        self.modules.add(module_name)
 
     def aimport_module(self, module_name):
         """Import a module, and mark it reloadable
@@ -174,12 +176,16 @@ class ModuleReloader:
         if check_all or self.check_all:
             modules = list(sys.modules.keys())
         else:
-            modules = list(self.modules.keys())
+            modules = list(self.modules)
 
         for modname in modules:
             m = sys.modules.get(modname, None)
 
-            if modname in self.skip_modules:
+            package_components = modname.split(".")
+            if any(
+                ".".join(package_components[:idx]) in self.skip_modules
+                for idx in range(1, len(package_components))
+            ):
                 continue
 
             py_filename, pymtime = self.filename_and_mtime(m)
