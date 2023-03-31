@@ -227,6 +227,8 @@ func_attrs = [
 
 def update_function(old, new):
     """Upgrade the code object of a function"""
+    if old is new:
+        return
     for name in func_attrs:
         try:
             setattr(old, name, getattr(new, name))
@@ -235,6 +237,8 @@ def update_function(old, new):
 
 
 def update_method(old: MethodType, new: MethodType):
+    if old is new:
+        return
     update_function(old.__func__, new.__func__)
     # TODO: handle __self__
 
@@ -243,6 +247,8 @@ def update_instances(old, new):
     """Use garbage collector to find all instances that refer to the old
     class definition and update their __class__ to point to the new class
     definition"""
+    if old is new:
+        return
 
     refs = gc.get_referrers(old)
 
