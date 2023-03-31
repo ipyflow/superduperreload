@@ -20,6 +20,7 @@ import shutil
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from dataclasses import dataclass
 from io import StringIO
@@ -150,6 +151,21 @@ class Fixture(unittest.TestCase):
         return module_name, file_name
 
     def write_file(self, filename, content):
+        """
+        Write a file, and force a timestamp difference of at least one second
+
+        Notes
+        -----
+        Python's .pyc files record the timestamp of their compilation
+        with a time resolution of one second.
+
+        Therefore, we need to force a timestamp difference between .py
+        and .pyc, without having the .py file be timestamped in the
+        future, and without changing the timestamp of the .pyc file
+        (because that is stored in the file).  The only reliable way
+        to achieve this seems to be to sleep.
+        """
+        time.sleep(1.05)
         with open(filename, "w", encoding="utf-8") as f:
             f.write(squish_text(content))
 

@@ -139,14 +139,13 @@ class ModuleReloader:
         return top_module, top_name
 
     def filename_and_mtime(self, module):
-        if not hasattr(module, "__file__") or module.__file__ is None:
+        if getattr(module, "__name__", None) is None:
             return None, None
 
-        if getattr(module, "__name__", None) in [None, "__mp_main__", "__main__"]:
-            # we cannot reload(__main__) or reload(__mp_main__)
+        filename = getattr(module, "__file__", None)
+        if filename is None:
             return None, None
 
-        filename = module.__file__
         path, ext = os.path.splitext(filename)
 
         if ext.lower() == ".py":
