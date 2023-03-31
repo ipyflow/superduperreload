@@ -215,13 +215,13 @@ class ModuleReloader:
 # ------------------------------------------------------------------------------
 
 
-func_attrs = [
+_FUNC_ATTRS = [
+    "__closure__",
     "__code__",
     "__defaults__",
     "__doc__",
-    "__closure__",
-    "__globals__",
     "__dict__",
+    "__globals__",
 ]
 
 
@@ -229,7 +229,7 @@ def update_function(old, new):
     """Upgrade the code object of a function"""
     if old is new:
         return
-    for name in func_attrs:
+    for name in _FUNC_ATTRS:
         try:
             setattr(old, name, getattr(new, name))
         except (AttributeError, TypeError):
