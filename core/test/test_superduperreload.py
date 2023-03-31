@@ -165,7 +165,8 @@ class Fixture(unittest.TestCase):
         (because that is stored in the file).  The only reliable way
         to achieve this seems to be to sleep.
         """
-        time.sleep(1.05)
+        if platform.system() == "Linux":
+            time.sleep(1.05)
         with open(filename, "w", encoding="utf-8") as f:
             f.write(squish_text(content))
 
