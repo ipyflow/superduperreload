@@ -60,6 +60,14 @@ from importlib.util import source_from_cache
 from types import FunctionType, MethodType
 from typing import Type
 
+_ClassCallableTypes = (
+    FunctionType,
+    MethodType,
+    property,
+    functools.partial,
+    functools.partialmethod,
+)
+
 
 class ModuleReloader:
     enabled = False
@@ -70,6 +78,7 @@ class ModuleReloader:
 
     autoload_obj = False
     """Autoreload all modules AND autoload all new objects"""
+    _NOT_FOUND = object()
 
     def __init__(self, shell=None):
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
@@ -264,31 +273,39 @@ def update_class(old: Type[object], new: Type[object]) -> None:
         return
     for key in list(old.__dict__.keys()):
         old_obj = getattr(old, key)
+        new_obj = getattr(new, key, ModuleReloader._NOT_FOUND)
         try:
-            new_obj = getattr(new, key)
-            # explicitly checking that comparison returns True to handle
-            # cases where `==` doesn't return a boolean.
             if (old_obj == new_obj) is True:
                 continue
-        except AttributeError:
+        except ValueError:
+            # can't compare nested structures containing
+            # numpy arrays using `==`
+            pass
+        if new_obj is ModuleReloader._NOT_FOUND and isinstance(
+            old_obj, _ClassCallableTypes
+        ):
             # obsolete attribute: remove it
             try:
                 delattr(old, key)
             except (AttributeError, TypeError):
                 pass
-            continue
-        except ValueError:
-            # can't compare nested structures containing
-            # numpy arrays using `==`
-            pass
+        elif not isinstance(old_obj, _ClassCallableTypes) or not isinstance(
+            new_obj, _ClassCallableTypes
+        ):
+            try:
+                # prefer the old version for non-functions
+                setattr(new, key, old_obj)
+            except (AttributeError, TypeError):
+                pass  # skip non-writable attributes
+        else:
+            try:
+                # prefer the new version for functions
+                setattr(old, key, new_obj)
+            except (AttributeError, TypeError):
+                pass  # skip non-writable attributes
 
         if update_generic(old_obj, new_obj):
             continue
-
-        try:
-            setattr(old, key, getattr(new, key))
-        except (AttributeError, TypeError):
-            pass  # skip non-writable attributes
 
     for key in list(new.__dict__.keys()):
         if key not in list(old.__dict__.keys()):
