@@ -624,7 +624,6 @@ class TestAutoreload(Fixture):
 
         def check_module_contents():
             self.assertEqual(mod.x, 10)
-            self.assertFalse(hasattr(mod, "z"))
 
             self.assertEqual(old_foo(0), 4)  # superreload magic!
             self.assertEqual(mod.foo(0), 4)

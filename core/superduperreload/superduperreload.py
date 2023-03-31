@@ -49,14 +49,16 @@ __skip_doctest__ = True
 # This IPython module is written by Pauli Virtanen, based on the autoreload
 # code by Thomas Heller.
 
+import functools
 import gc
 import os
 import sys
 import traceback
-import types
 import weakref
 from importlib import import_module, reload
 from importlib.util import source_from_cache
+from types import FunctionType, MethodType
+from typing import Type
 
 
 class ModuleReloader:
@@ -192,9 +194,9 @@ class ModuleReloader:
                 self._report(f"Reloading '{modname}'.")
                 try:
                     if self.autoload_obj:
-                        superreload(m, reload, self.old_objects, self.shell)
+                        superduperreload(m, reload, self.old_objects, self.shell)
                     else:
-                        superreload(m, reload, self.old_objects)
+                        superduperreload(m, reload, self.old_objects)
                     self.failed.pop(py_filename, None)
                     self.reloaded_modules.append(modname)
                 except:
@@ -209,7 +211,7 @@ class ModuleReloader:
 
 
 # ------------------------------------------------------------------------------
-# superreload
+# superduperreload
 # ------------------------------------------------------------------------------
 
 
@@ -232,6 +234,11 @@ def update_function(old, new):
             pass
 
 
+def update_method(old: MethodType, new: MethodType):
+    update_function(old.__func__, new.__func__)
+    # TODO: handle __self__
+
+
 def update_instances(old, new):
     """Use garbage collector to find all instances that refer to the old
     class definition and update their __class__ to point to the new class
@@ -244,9 +251,11 @@ def update_instances(old, new):
             object.__setattr__(ref, "__class__", new)
 
 
-def update_class(old, new):
+def update_class(old: Type[object], new: Type[object]) -> None:
     """Replace stuff in the __dict__ of a class, and upgrade
     method code objects, and add new methods, if any"""
+    if old is new:
+        return
     for key in list(old.__dict__.keys()):
         old_obj = getattr(old, key)
         try:
@@ -286,11 +295,29 @@ def update_class(old, new):
     update_instances(old, new)
 
 
-def update_property(old, new):
+def update_property(old: property, new: property) -> None:
     """Replace get/set/del functions of a property"""
+    if old is new:
+        return
     update_generic(old.fdel, new.fdel)
     update_generic(old.fget, new.fget)
     update_generic(old.fset, new.fset)
+
+
+def update_partial(old: functools.partial, new: functools.partial) -> None:
+    if old is new:
+        return
+    update_function(old.func, new.func)
+    # TODO: args, keywords
+
+
+def update_partialmethod(
+    old: functools.partialmethod, new: functools.partialmethod
+) -> None:
+    if old is new:
+        return
+    update_method(old.func, new.func)  # type: ignore
+    # TODO: args, keywords
 
 
 def isinstance2(a, b, typ):
@@ -299,20 +326,15 @@ def isinstance2(a, b, typ):
 
 UPDATE_RULES = [
     (lambda a, b: isinstance2(a, b, type), update_class),
-    (lambda a, b: isinstance2(a, b, types.FunctionType), update_function),
+    (lambda a, b: isinstance2(a, b, FunctionType), update_function),
+    (lambda a, b: isinstance2(a, b, MethodType), update_method),
     (lambda a, b: isinstance2(a, b, property), update_property),
+    (lambda a, b: isinstance2(a, b, functools.partial), update_partial),
+    (lambda a, b: isinstance2(a, b, functools.partialmethod), update_partialmethod),
 ]
-UPDATE_RULES.extend(
-    [
-        (
-            lambda a, b: isinstance2(a, b, types.MethodType),
-            lambda a, b: update_function(a.__func__, b.__func__),
-        ),
-    ]
-)
 
 
-def update_generic(a, b):
+def update_generic(a: object, b: object) -> bool:
     for type_check, update in UPDATE_RULES:
         if type_check(a, b):
             update(a, b)
@@ -358,10 +380,10 @@ def append_obj(module, d, name, obj, autoload=False):
     return True
 
 
-def superreload(module, reload=reload, old_objects=None, shell=None):
-    """Enhanced version of the builtin reload function.
+def superduperreload(module, reload=reload, old_objects=None, shell=None):
+    """Enhanced version of the superreload function from IPython's autoreload extension.
 
-    superreload remembers objects previously in the module, and
+    superduperreload remembers objects previously in the module, and
 
     - upgrades the class dictionary of every old class in the module
     - upgrades the code object of every old function and method
@@ -382,21 +404,20 @@ def superreload(module, reload=reload, old_objects=None, shell=None):
             pass
 
     # reload module
+    old_dict = None
     try:
-        # clear namespace first from old cruft
+        # first save a reference to previous stuff
         old_dict = module.__dict__.copy()
-        old_name = module.__name__
-        module.__dict__.clear()
-        module.__dict__["__name__"] = old_name
-        module.__dict__["__loader__"] = old_dict["__loader__"]
     except (TypeError, AttributeError, KeyError):
         pass
 
     try:
         module = reload(module)
-    except:
+    except BaseException:
         # restore module dictionary on failed reload
-        module.__dict__.update(old_dict)
+        if old_dict is not None:
+            module.__dict__.clear()
+            module.__dict__.update(old_dict)
         raise
 
     # iterate over all objects and update functions & classes
