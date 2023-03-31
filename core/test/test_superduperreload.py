@@ -162,10 +162,12 @@ class Fixture(unittest.TestCase):
         Therefore, we need to force a timestamp difference between .py
         and .pyc, without having the .py file be timestamped in the
         future, and without changing the timestamp of the .pyc file
-        (because that is stored in the file).  The only reliable way
+        (because that is stored in the file). The only reliable way
         to achieve this seems to be to sleep.
+
+        Doesn't seem necessary on Darwin so we make this the exception.
         """
-        if platform.system() == "Linux":
+        if platform.system().lower() != "darwin":
             time.sleep(1.05)
         with open(filename, "w", encoding="utf-8") as f:
             f.write(squish_text(content))
