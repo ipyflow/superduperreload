@@ -41,6 +41,17 @@ if platform.python_implementation() == "PyPy":
         allow_module_level=True,
     )
 
+
+def should_skip_known_failing(reason="this test tests unimpled functionality"):
+    return {
+        "condition": bool(int(os.getenv("SHOULD_SKIP_KNOWN_FAILING", "1"))),
+        "reason": reason,
+    }
+
+
+skipif_known_failing = pytest.mark.skipif(**should_skip_known_failing())
+
+
 # -----------------------------------------------------------------------------
 # Test fixture
 # -----------------------------------------------------------------------------
@@ -345,6 +356,7 @@ class TestAutoreload(Fixture):
             assert self.reloader.reloaded_modules == [mod_name]
             assert self.reloader.failed_modules == []
 
+    @skipif_known_failing
     def test_autoload_newly_added_objects(self):
         # All of these fail with %autoreload 2
         self.shell.magic_autoreload("3")
@@ -436,21 +448,18 @@ class TestAutoreload(Fixture):
         class AutoreloadSettings:
             check_all: bool
             enabled: bool
-            autoload_obj: bool
 
         def gather_settings(mode):
             self.shell.magic_autoreload(mode)
             return AutoreloadSettings(
                 self.reloader.check_all,
                 self.reloader.enabled,
-                self.reloader.autoload_obj,
             )
 
         assert gather_settings("0") == gather_settings("off")
         assert gather_settings("0") == gather_settings("OFF")  # Case insensitive
         assert gather_settings("1") == gather_settings("explicit")
         assert gather_settings("2") == gather_settings("all")
-        assert gather_settings("3") == gather_settings("complete")
 
         # And an invalid mode name raises an exception.
         with self.assertRaises(ValueError):
@@ -475,7 +484,7 @@ class TestAutoreload(Fixture):
         assert "os" not in self.reloader.modules
 
     def test_autoreload_output(self):
-        self.shell.magic_autoreload("complete")
+        self.shell.magic_autoreload("all")
         mod_code = """
         def func1(): pass
         """
@@ -485,28 +494,28 @@ class TestAutoreload(Fixture):
         assert self.reloader.reloaded_modules == []
         assert self.reloader.failed_modules == []
 
-        self.shell.magic_autoreload("complete --print")
+        self.shell.magic_autoreload("all --print")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("complete -p")
+        self.shell.magic_autoreload("all -p")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("complete --print --log")
+        self.shell.magic_autoreload("all --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("complete --print --log")
+        self.shell.magic_autoreload("all --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         with self.assertLogs(logger="autoreload") as lo:  # see something printed out
             self.shell.run_code("pass")
         assert lo.output == [f"INFO:autoreload:Reloading '{mod_name}'."]
 
-        self.shell.magic_autoreload("complete -l")
+        self.shell.magic_autoreload("all -l")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         with self.assertLogs(logger="autoreload") as lo:  # see something printed out
             self.shell.run_code("pass")

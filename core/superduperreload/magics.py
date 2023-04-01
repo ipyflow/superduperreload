@@ -104,7 +104,6 @@ class AutoreloadMagics(Magics):
         super().__init__(*a, **kw)
         self._reloader = ModuleReloader(self.shell)
         self._reloader.check_all = False
-        self._reloader.autoload_obj = False
         self.loaded_modules = set(sys.modules)
 
     @line_magic
@@ -160,10 +159,6 @@ class AutoreloadMagics(Magics):
         %autoreload 2 or %autoreload all
         Reload all modules (except those excluded by %aimport) every time
         before executing the Python code typed.
-
-        %autoreload 3 or %autoreload complete
-        Same as 2/all, but also but also adds any new objects in the module. See
-        unit test at IPython/extensions/tests/test_autoreload.py::test_autoload_newly_added_objects
 
         The optional arguments --print and --log control display of autoreload activity. The default
         is to act silently; --print (or -p) will print out the names of modules that are being
@@ -225,15 +220,9 @@ class AutoreloadMagics(Magics):
         elif mode == "1" or mode == "explicit":
             self._reloader.enabled = True
             self._reloader.check_all = False
-            self._reloader.autoload_obj = False
         elif mode == "2" or mode == "all":
             self._reloader.enabled = True
             self._reloader.check_all = True
-            self._reloader.autoload_obj = False
-        elif mode == "3" or mode == "complete":
-            self._reloader.enabled = True
-            self._reloader.check_all = True
-            self._reloader.autoload_obj = True
         else:
             raise ValueError(f'Unrecognized autoreload mode "{mode}".')
 

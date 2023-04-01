@@ -74,8 +74,6 @@ class ModuleReloader:
     enabled = False
     # Autoreload all modules, not just those listed in 'modules'
     check_all = True
-    # Autoreload all modules AND autoload all new objects
-    autoload_obj = False
     # Placeholder for indicating an attribute is not found
     _NOT_FOUND = object()
 
@@ -96,6 +94,8 @@ class ModuleReloader:
         }
         # (module-name, name) -> weakref, for replacing old code objects
         self.old_objects = {}
+        # object ids updated during a round of superduperreload
+        self._updated_obj_ids: Set[int] = set()
         # Module modification timestamps
         self.modules_mtimes = {}
         self.shell = shell
@@ -202,36 +202,34 @@ class ModuleReloader:
 
             self.modules_mtimes[modname] = pymtime
 
+            if not do_reload:
+                continue
+
             # If we've reached this point, we should try to reload the module
-            if do_reload:
-                self._report(f"Reloading '{modname}'.")
-                try:
-                    self.superduperreload(m)
-                    self.failed.pop(py_filename, None)
-                    self.reloaded_modules.append(modname)
-                except:
-                    print(
-                        "[autoreload of {} failed: {}]".format(
-                            modname, traceback.format_exc(10)
-                        ),
-                        file=sys.stderr,
-                    )
-                    self.failed[py_filename] = pymtime
-                    self.failed_modules.append(modname)
+            self._report(f"Reloading '{modname}'.")
+            try:
+                self.superduperreload(m)
+                self.failed.pop(py_filename, None)
+                self.reloaded_modules.append(modname)
+            except:  # noqa: E722
+                print(
+                    "[autoreload of {} failed: {}]".format(
+                        modname, traceback.format_exc(10)
+                    ),
+                    file=sys.stderr,
+                )
+                self.failed[py_filename] = pymtime
+                self.failed_modules.append(modname)
 
-    def append_obj(self, module, name, obj, autoload=False):
+    def append_obj(self, module, name, obj):
         in_module = hasattr(obj, "__module__") and obj.__module__ == module.__name__
-        if autoload:
-            # check needed for module global built-ins
-            if not in_module and name in _MOD_ATTRS:
-                return False
-        else:
-            if not in_module:
-                return False
+        if not in_module:
+            return False
 
-        key = (module.__name__, name)
         try:
-            self.old_objects.setdefault(key, []).append(weakref.ref(obj))
+            self.old_objects.setdefault((module.__name__, name), []).append(
+                weakref.ref(obj)
+            )
         except TypeError:
             pass
         return True
@@ -244,8 +242,9 @@ class ModuleReloader:
         - upgrades the class dictionary of every old class in the module
         - upgrades the code object of every old function and method
         - clears the module's namespace before reloading
-
         """
+        self._updated_obj_ids.clear()
+
         # collect old objects in the module
         for name, obj in list(module.__dict__.items()):
             if not self.append_obj(module, name, obj):
@@ -272,14 +271,7 @@ class ModuleReloader:
         for name, new_obj in list(module.__dict__.items()):
             key = (module.__name__, name)
             if key not in self.old_objects:
-                if (
-                    not self.autoload_obj
-                    or self.shell is None
-                    or name == "Enum"
-                    or not self.append_obj(module, name, new_obj, autoload=True)
-                ):
-                    continue
-                self.shell.user_ns[name] = new_obj
+                continue
 
             new_refs = []
             for old_ref in self.old_objects[key]:
@@ -287,8 +279,13 @@ class ModuleReloader:
                 if old_obj is None:
                     continue
                 new_refs.append(old_ref)
-                if old_obj is not new_obj:
-                    update_generic(old_obj, new_obj)
+                if old_obj is new_obj:
+                    continue
+                old_obj_id = id(old_obj)
+                if old_obj_id in self._updated_obj_ids:
+                    continue
+                update_generic(old_obj, new_obj)
+                self._updated_obj_ids.add(old_obj_id)
 
             if new_refs:
                 self.old_objects[key] = new_refs
