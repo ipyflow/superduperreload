@@ -36,6 +36,19 @@ Some of the known remaining caveats are:
 
 __skip_doctest__ = True
 
+import ctypes
+import functools
+import gc
+import os
+import sys
+import traceback
+import weakref
+from enum import Enum
+from importlib import import_module, reload
+from importlib.util import source_from_cache
+from types import FunctionType, MethodType
+from typing import Dict, Optional, Set, Type
+
 # -----------------------------------------------------------------------------
 #  Copyright (C) 2000 Thomas Heller
 #  Copyright (C) 2008 Pauli Virtanen <pav@iki.fi>
@@ -49,16 +62,6 @@ __skip_doctest__ = True
 # This IPython module is written by Pauli Virtanen, based on the autoreload
 # code by Thomas Heller.
 
-import functools
-import gc
-import os
-import sys
-import traceback
-import weakref
-from importlib import import_module, reload
-from importlib.util import source_from_cache
-from types import FunctionType, MethodType
-from typing import Set, Type
 
 _ClassCallableTypes = (
     FunctionType,
@@ -330,6 +333,106 @@ class ModuleReloader:
         "__globals__",
     ]
 
+    class CPythonStructType(Enum):
+        CLASS = "class"
+        FUNCTION = "function"
+        METHOD = "method"
+        PARTIAL = "partial"
+        PARTIALMETHOD = "partialmethod"
+
+    _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[str, Dict[str, int]] = {
+        CPythonStructType.CLASS.value: {},
+        CPythonStructType.FUNCTION.value: {},
+        CPythonStructType.METHOD.value: {},
+    }
+
+    _MAX_FIELD_SEARCH_OFFSET = 50
+
+    @classmethod
+    def _infer_field_offset(
+        cls,
+        struct_type: "CPythonStructType",
+        obj: object,
+        field: str,
+        cache: bool = True,
+    ) -> int:
+        field_value = getattr(obj, field, cls._NOT_FOUND)
+        if field_value is cls._NOT_FOUND:
+            return -1
+        if cache:
+            offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[
+                struct_type.value
+            ]
+        else:
+            offset_tab = {}
+        ret = offset_tab.get(field)
+        if ret is not None:
+            return ret
+        obj_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(obj)).value
+        field_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(field_value)).value
+        if obj_addr is None or field_addr is None:
+            offset_tab[field] = -1
+            return -1
+        ret = -1
+        for offset in range(1, cls._MAX_FIELD_SEARCH_OFFSET):
+            if (
+                ctypes.cast(
+                    obj_addr + 8 * offset, ctypes.POINTER(ctypes.c_long)
+                ).contents.value
+                == field_addr
+            ):
+                ret = offset
+                break
+        offset_tab[field] = ret
+        return ret
+
+    @classmethod
+    def _try_write_readonly_attr(
+        cls,
+        struct_type: "CPythonStructType",
+        obj: object,
+        field: str,
+        new_value: object,
+        offset: Optional[int] = None,
+    ) -> None:
+        prev_value = getattr(obj, field, cls._NOT_FOUND)
+        if prev_value is cls._NOT_FOUND:
+            return
+        if offset is None:
+            offset = cls._infer_field_offset(struct_type, obj, field)
+        if offset == -1:
+            return
+        obj_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(obj)).value
+        new_value_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(new_value)).value
+        if obj_addr is None or new_value_addr is None:
+            return
+        ctypes.pythonapi.Py_DecRef(ctypes.py_object(prev_value))
+        ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_value))
+        ctypes.cast(
+            obj_addr + 8 * offset, ctypes.POINTER(ctypes.c_long)
+        ).contents.value = new_value_addr
+
+    @classmethod
+    def _try_upgrade_readonly_attr(
+        cls,
+        struct_type: "CPythonStructType",
+        old: object,
+        new: object,
+        field: str,
+    ) -> None:
+        old_value = getattr(old, field, cls._NOT_FOUND)
+        new_value = getattr(new, field, cls._NOT_FOUND)
+        if old_value is cls._NOT_FOUND or new_value is cls._NOT_FOUND:
+            return
+        elif old_value is new_value:
+            return
+        elif old_value is not None:
+            offset = cls._infer_field_offset(struct_type, old, field)
+        else:
+            assert new_value is not None
+            offset = cls._infer_field_offset(struct_type, new, field)
+        cls._try_write_readonly_attr(struct_type, old, field, new_value, offset=offset)
+
     def _update_function(self, old, new):
         """Upgrade the code object of a function"""
         if old is new:
@@ -338,13 +441,17 @@ class ModuleReloader:
             try:
                 setattr(old, name, getattr(new, name))
             except (AttributeError, TypeError):
-                pass
+                self._try_upgrade_readonly_attr(
+                    self.CPythonStructType.FUNCTION, old, new, name
+                )
 
     def _update_method(self, old: MethodType, new: MethodType):
         if old is new:
             return
         self._update_function(old.__func__, new.__func__)
-        # TODO: handle __self__
+        self._try_upgrade_readonly_attr(
+            self.CPythonStructType.METHOD, old, new, "__self__"
+        )
 
     @classmethod
     def _update_instances(cls, old, new):
@@ -422,7 +529,12 @@ class ModuleReloader:
         if old is new:
             return
         self._update_function(old.func, new.func)
-        # TODO: args, keywords
+        self._try_upgrade_readonly_attr(
+            self.CPythonStructType.PARTIAL, old, new, "args"
+        )
+        self._try_upgrade_readonly_attr(
+            self.CPythonStructType.PARTIAL, old, new, "keywords"
+        )
 
     def _update_partialmethod(
         self, old: functools.partialmethod, new: functools.partialmethod
@@ -430,7 +542,12 @@ class ModuleReloader:
         if old is new:
             return
         self._update_method(old.func, new.func)  # type: ignore
-        # TODO: args, keywords
+        self._try_upgrade_readonly_attr(
+            self.CPythonStructType.PARTIALMETHOD, old, new, "args"
+        )
+        self._try_upgrade_readonly_attr(
+            self.CPythonStructType.PARTIALMETHOD, old, new, "keywords"
+        )
 
     def _update_generic(self, old: object, new: object) -> None:
         if old is new:
