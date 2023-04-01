@@ -69,6 +69,10 @@ _ClassCallableTypes = (
 )
 
 
+def isinstance2(a, b, typ):
+    return isinstance(a, typ) and isinstance(b, typ)
+
+
 class ModuleReloader:
     # Whether this reloader is enabled
     enabled = False
@@ -108,6 +112,18 @@ class ModuleReloader:
 
         # Cache module modification times
         self.check(check_all=True, do_reload=False)
+
+        self._update_rules = [
+            (lambda a, b: isinstance2(a, b, type), self._update_class),
+            (lambda a, b: isinstance2(a, b, FunctionType), self._update_function),
+            (lambda a, b: isinstance2(a, b, MethodType), self._update_method),
+            (lambda a, b: isinstance2(a, b, property), self._update_property),
+            (lambda a, b: isinstance2(a, b, functools.partial), self._update_partial),
+            (
+                lambda a, b: isinstance2(a, b, functools.partialmethod),
+                self._update_partialmethod,
+            ),
+        ]
 
     def mark_module_skipped(self, module_name):
         """Skip reloading the named module in the future"""
@@ -281,11 +297,7 @@ class ModuleReloader:
                 new_refs.append(old_ref)
                 if old_obj is new_obj:
                     continue
-                old_obj_id = id(old_obj)
-                if old_obj_id in self._updated_obj_ids:
-                    continue
-                update_generic(old_obj, new_obj)
-                self._updated_obj_ids.add(old_obj_id)
+                self._update_generic(old_obj, new_obj)
 
             if new_refs:
                 self.old_objects[key] = new_refs
@@ -294,160 +306,140 @@ class ModuleReloader:
 
         return module
 
+    # ------------------------------------------------------------------------------
+    # superduperreload helpers
+    # ------------------------------------------------------------------------------
 
-# ------------------------------------------------------------------------------
-# superduperreload helpers
-# ------------------------------------------------------------------------------
+    _MOD_ATTRS = [
+        "__name__",
+        "__doc__",
+        "__package__",
+        "__loader__",
+        "__spec__",
+        "__file__",
+        "__cached__",
+        "__builtins__",
+    ]
 
+    _FUNC_ATTRS = [
+        "__closure__",
+        "__code__",
+        "__defaults__",
+        "__doc__",
+        "__dict__",
+        "__globals__",
+    ]
 
-_MOD_ATTRS = [
-    "__name__",
-    "__doc__",
-    "__package__",
-    "__loader__",
-    "__spec__",
-    "__file__",
-    "__cached__",
-    "__builtins__",
-]
-
-
-_FUNC_ATTRS = [
-    "__closure__",
-    "__code__",
-    "__defaults__",
-    "__doc__",
-    "__dict__",
-    "__globals__",
-]
-
-
-def update_function(old, new):
-    """Upgrade the code object of a function"""
-    if old is new:
-        return
-    for name in _FUNC_ATTRS:
-        try:
-            setattr(old, name, getattr(new, name))
-        except (AttributeError, TypeError):
-            pass
-
-
-def update_method(old: MethodType, new: MethodType):
-    if old is new:
-        return
-    update_function(old.__func__, new.__func__)
-    # TODO: handle __self__
-
-
-def update_instances(old, new):
-    """Use garbage collector to find all instances that refer to the old
-    class definition and update their __class__ to point to the new class
-    definition"""
-    if old is new:
-        return
-
-    refs = gc.get_referrers(old)
-
-    for ref in refs:
-        if type(ref) is old:
-            object.__setattr__(ref, "__class__", new)
-
-
-def update_class(old: Type[object], new: Type[object]) -> None:
-    """Replace stuff in the __dict__ of a class, and upgrade
-    method code objects, and add new methods, if any"""
-    if old is new:
-        return
-    for key in list(old.__dict__.keys()):
-        old_obj = getattr(old, key)
-        new_obj = getattr(new, key, ModuleReloader._NOT_FOUND)
-        try:
-            if (old_obj == new_obj) is True:
-                continue
-        except ValueError:
-            # can't compare nested structures containing
-            # numpy arrays using `==`
-            pass
-        if new_obj is ModuleReloader._NOT_FOUND and isinstance(
-            old_obj, _ClassCallableTypes
-        ):
-            # obsolete attribute: remove it
+    def _update_function(self, old, new):
+        """Upgrade the code object of a function"""
+        if old is new:
+            return
+        for name in self._FUNC_ATTRS:
             try:
-                delattr(old, key)
+                setattr(old, name, getattr(new, name))
             except (AttributeError, TypeError):
                 pass
-        elif not isinstance(old_obj, _ClassCallableTypes) or not isinstance(
-            new_obj, _ClassCallableTypes
-        ):
-            try:
-                # prefer the old version for non-functions
-                setattr(new, key, old_obj)
-            except (AttributeError, TypeError):
-                pass  # skip non-writable attributes
-        else:
-            try:
-                # prefer the new version for functions
-                setattr(old, key, new_obj)
-            except (AttributeError, TypeError):
-                pass  # skip non-writable attributes
 
-        update_generic(old_obj, new_obj)
-
-    for key in list(new.__dict__.keys()):
-        if key not in list(old.__dict__.keys()):
-            try:
-                setattr(old, key, getattr(new, key))
-            except (AttributeError, TypeError):
-                pass  # skip non-writable attributes
-
-    # update all instances of class
-    update_instances(old, new)
-
-
-def update_property(old: property, new: property) -> None:
-    """Replace get/set/del functions of a property"""
-    if old is new:
-        return
-    update_generic(old.fdel, new.fdel)
-    update_generic(old.fget, new.fget)
-    update_generic(old.fset, new.fset)
-
-
-def update_partial(old: functools.partial, new: functools.partial) -> None:
-    if old is new:
-        return
-    update_function(old.func, new.func)
-    # TODO: args, keywords
-
-
-def update_partialmethod(
-    old: functools.partialmethod, new: functools.partialmethod
-) -> None:
-    if old is new:
-        return
-    update_method(old.func, new.func)  # type: ignore
-    # TODO: args, keywords
-
-
-def isinstance2(a, b, typ):
-    return isinstance(a, typ) and isinstance(b, typ)
-
-
-UPDATE_RULES = [
-    (lambda a, b: isinstance2(a, b, type), update_class),
-    (lambda a, b: isinstance2(a, b, FunctionType), update_function),
-    (lambda a, b: isinstance2(a, b, MethodType), update_method),
-    (lambda a, b: isinstance2(a, b, property), update_property),
-    (lambda a, b: isinstance2(a, b, functools.partial), update_partial),
-    (lambda a, b: isinstance2(a, b, functools.partialmethod), update_partialmethod),
-]
-
-
-def update_generic(a: object, b: object) -> None:
-    if a is b:
-        return
-    for type_check, update in UPDATE_RULES:
-        if type_check(a, b):
-            update(a, b)
+    def _update_method(self, old: MethodType, new: MethodType):
+        if old is new:
             return
+        self._update_function(old.__func__, new.__func__)
+        # TODO: handle __self__
+
+    @classmethod
+    def _update_instances(cls, old, new):
+        """Use garbage collector to find all instances that refer to the old
+        class definition and update their __class__ to point to the new class
+        definition"""
+        if old is new:
+            return
+
+        refs = gc.get_referrers(old)
+
+        for ref in refs:
+            if type(ref) is old:
+                object.__setattr__(ref, "__class__", new)
+
+    def _update_class(self, old: Type[object], new: Type[object]) -> None:
+        """Replace stuff in the __dict__ of a class, and upgrade
+        method code objects, and add new methods, if any"""
+        if old is new:
+            return
+        for key in list(old.__dict__.keys()):
+            old_obj = getattr(old, key)
+            new_obj = getattr(new, key, ModuleReloader._NOT_FOUND)
+            try:
+                if (old_obj == new_obj) is True:
+                    continue
+            except ValueError:
+                # can't compare nested structures containing
+                # numpy arrays using `==`
+                pass
+            if new_obj is ModuleReloader._NOT_FOUND and isinstance(
+                old_obj, _ClassCallableTypes
+            ):
+                # obsolete attribute: remove it
+                try:
+                    delattr(old, key)
+                except (AttributeError, TypeError):
+                    pass
+            elif not isinstance(old_obj, _ClassCallableTypes) or not isinstance(
+                new_obj, _ClassCallableTypes
+            ):
+                try:
+                    # prefer the old version for non-functions
+                    setattr(new, key, old_obj)
+                except (AttributeError, TypeError):
+                    pass  # skip non-writable attributes
+            else:
+                try:
+                    # prefer the new version for functions
+                    setattr(old, key, new_obj)
+                except (AttributeError, TypeError):
+                    pass  # skip non-writable attributes
+
+            self._update_generic(old_obj, new_obj)
+
+        for key in list(new.__dict__.keys()):
+            if key not in list(old.__dict__.keys()):
+                try:
+                    setattr(old, key, getattr(new, key))
+                except (AttributeError, TypeError):
+                    pass  # skip non-writable attributes
+
+        # update all instances of class
+        self._update_instances(old, new)
+
+    def _update_property(self, old: property, new: property) -> None:
+        """Replace get/set/del functions of a property"""
+        if old is new:
+            return
+        self._update_generic(old.fdel, new.fdel)
+        self._update_generic(old.fget, new.fget)
+        self._update_generic(old.fset, new.fset)
+
+    def _update_partial(self, old: functools.partial, new: functools.partial) -> None:
+        if old is new:
+            return
+        self._update_function(old.func, new.func)
+        # TODO: args, keywords
+
+    def _update_partialmethod(
+        self, old: functools.partialmethod, new: functools.partialmethod
+    ) -> None:
+        if old is new:
+            return
+        self._update_method(old.func, new.func)  # type: ignore
+        # TODO: args, keywords
+
+    def _update_generic(self, old: object, new: object) -> None:
+        if old is new:
+            return
+        old_id = id(old)
+        if old_id in self._updated_obj_ids:
+            return
+        self._updated_obj_ids.add(old_id)
+        for type_check, update in self._update_rules:
+            if type_check(old, new):
+                update(old, new)
+                return
