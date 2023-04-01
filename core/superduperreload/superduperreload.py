@@ -70,14 +70,13 @@ _ClassCallableTypes = (
 
 
 class ModuleReloader:
+    # Whether this reloader is enabled
     enabled = False
-    """Whether this reloader is enabled"""
-
+    # Autoreload all modules, not just those listed in 'modules'
     check_all = True
-    """Autoreload all modules, not just those listed in 'modules'"""
-
+    # Autoreload all modules AND autoload all new objects
     autoload_obj = False
-    """Autoreload all modules AND autoload all new objects"""
+    # Placeholder for indicating an attribute is not found
     _NOT_FOUND = object()
 
     def __init__(self, shell=None):
@@ -207,10 +206,7 @@ class ModuleReloader:
             if do_reload:
                 self._report(f"Reloading '{modname}'.")
                 try:
-                    if self.autoload_obj:
-                        superduperreload(m, reload, self.old_objects, self.shell)
-                    else:
-                        superduperreload(m, reload, self.old_objects)
+                    self.superduperreload(m)
                     self.failed.pop(py_filename, None)
                     self.reloaded_modules.append(modname)
                 except:
@@ -223,10 +219,100 @@ class ModuleReloader:
                     self.failed[py_filename] = pymtime
                     self.failed_modules.append(modname)
 
+    def append_obj(self, module, name, obj, autoload=False):
+        in_module = hasattr(obj, "__module__") and obj.__module__ == module.__name__
+        if autoload:
+            # check needed for module global built-ins
+            if not in_module and name in _MOD_ATTRS:
+                return False
+        else:
+            if not in_module:
+                return False
+
+        key = (module.__name__, name)
+        try:
+            self.old_objects.setdefault(key, []).append(weakref.ref(obj))
+        except TypeError:
+            pass
+        return True
+
+    def superduperreload(self, module):
+        """Enhanced version of the superreload function from IPython's autoreload extension.
+
+        superduperreload remembers objects previously in the module, and
+
+        - upgrades the class dictionary of every old class in the module
+        - upgrades the code object of every old function and method
+        - clears the module's namespace before reloading
+
+        """
+        # collect old objects in the module
+        for name, obj in list(module.__dict__.items()):
+            if not self.append_obj(module, name, obj):
+                continue
+
+        # reload module
+        old_dict = None
+        try:
+            # first save a reference to previous stuff
+            old_dict = module.__dict__.copy()
+        except (TypeError, AttributeError, KeyError):
+            pass
+
+        try:
+            module = reload(module)
+        except BaseException:
+            # restore module dictionary on failed reload
+            if old_dict is not None:
+                module.__dict__.clear()
+                module.__dict__.update(old_dict)
+            raise
+
+        # iterate over all objects and update functions & classes
+        for name, new_obj in list(module.__dict__.items()):
+            key = (module.__name__, name)
+            if key not in self.old_objects:
+                if (
+                    not self.autoload_obj
+                    or self.shell is None
+                    or name == "Enum"
+                    or not self.append_obj(module, name, new_obj, autoload=True)
+                ):
+                    continue
+                self.shell.user_ns[name] = new_obj
+
+            new_refs = []
+            for old_ref in self.old_objects[key]:
+                old_obj = old_ref()
+                if old_obj is None:
+                    continue
+                new_refs.append(old_ref)
+                if old_obj is not new_obj:
+                    update_generic(old_obj, new_obj)
+
+            if new_refs:
+                self.old_objects[key] = new_refs
+            else:
+                self.old_objects.pop(key, None)
+
+        return module
+
 
 # ------------------------------------------------------------------------------
-# superduperreload
+# superduperreload helpers
 # ------------------------------------------------------------------------------
+
+
+_MOD_ATTRS = [
+    "__name__",
+    "__doc__",
+    "__package__",
+    "__loader__",
+    "__spec__",
+    "__file__",
+    "__cached__",
+    "__builtins__",
+]
 
 
 _FUNC_ATTRS = [
@@ -309,8 +395,7 @@ def update_class(old: Type[object], new: Type[object]) -> None:
             except (AttributeError, TypeError):
                 pass  # skip non-writable attributes
 
-        if update_generic(old_obj, new_obj):
-            continue
+        update_generic(old_obj, new_obj)
 
     for key in list(new.__dict__.keys()):
         if key not in list(old.__dict__.keys()):
@@ -362,116 +447,10 @@ UPDATE_RULES = [
 ]
 
 
-def update_generic(a: object, b: object) -> bool:
+def update_generic(a: object, b: object) -> None:
+    if a is b:
+        return
     for type_check, update in UPDATE_RULES:
         if type_check(a, b):
             update(a, b)
-            return True
-    return False
-
-
-class StrongRef:
-    def __init__(self, obj):
-        self.obj = obj
-
-    def __call__(self):
-        return self.obj
-
-
-mod_attrs = [
-    "__name__",
-    "__doc__",
-    "__package__",
-    "__loader__",
-    "__spec__",
-    "__file__",
-    "__cached__",
-    "__builtins__",
-]
-
-
-def append_obj(module, d, name, obj, autoload=False):
-    in_module = hasattr(obj, "__module__") and obj.__module__ == module.__name__
-    if autoload:
-        # check needed for module global built-ins
-        if not in_module and name in mod_attrs:
-            return False
-    else:
-        if not in_module:
-            return False
-
-    key = (module.__name__, name)
-    try:
-        d.setdefault(key, []).append(weakref.ref(obj))
-    except TypeError:
-        pass
-    return True
-
-
-def superduperreload(module, reload=reload, old_objects=None, shell=None):
-    """Enhanced version of the superreload function from IPython's autoreload extension.
-
-    superduperreload remembers objects previously in the module, and
-
-    - upgrades the class dictionary of every old class in the module
-    - upgrades the code object of every old function and method
-    - clears the module's namespace before reloading
-
-    """
-    if old_objects is None:
-        old_objects = {}
-
-    # collect old objects in the module
-    for name, obj in list(module.__dict__.items()):
-        if not append_obj(module, old_objects, name, obj):
-            continue
-        key = (module.__name__, name)
-        try:
-            old_objects.setdefault(key, []).append(weakref.ref(obj))
-        except TypeError:
-            pass
-
-    # reload module
-    old_dict = None
-    try:
-        # first save a reference to previous stuff
-        old_dict = module.__dict__.copy()
-    except (TypeError, AttributeError, KeyError):
-        pass
-
-    try:
-        module = reload(module)
-    except BaseException:
-        # restore module dictionary on failed reload
-        if old_dict is not None:
-            module.__dict__.clear()
-            module.__dict__.update(old_dict)
-        raise
-
-    # iterate over all objects and update functions & classes
-    for name, new_obj in list(module.__dict__.items()):
-        key = (module.__name__, name)
-        if key not in old_objects:
-            # here 'shell' acts both as a flag and as an output var
-            if (
-                shell is None
-                or name == "Enum"
-                or not append_obj(module, old_objects, name, new_obj, True)
-            ):
-                continue
-            shell.user_ns[name] = new_obj
-
-        new_refs = []
-        for old_ref in old_objects[key]:
-            old_obj = old_ref()
-            if old_obj is None:
-                continue
-            new_refs.append(old_ref)
-            update_generic(old_obj, new_obj)
-
-        if new_refs:
-            old_objects[key] = new_refs
-        else:
-            del old_objects[key]
-
-    return module
+            return
