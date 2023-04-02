@@ -465,20 +465,16 @@ class TestAutoreload(Fixture):
     def test_aimport_parsing(self):
         # Modules can be included or excluded all in one line.
         self.shell.magic_aimport("os")  # import and mark `os` for auto-reload.
-        assert "os" in self.reloader.modules
         assert "os" not in self.reloader.skip_modules
 
         self.shell.magic_aimport("-math")  # forbid superduperreloading of `math`
         assert "math" in self.reloader.skip_modules
-        assert "math" not in self.reloader.modules
 
         self.shell.magic_aimport(
             "-os, math"
         )  # Can do this all in one line; wasn't possible before.
-        assert "math" in self.reloader.modules
         assert "math" not in self.reloader.skip_modules
         assert "os" in self.reloader.skip_modules
-        assert "os" not in self.reloader.modules
 
     def test_superduperreload_output(self):
         self.shell.magic_superduperreload("on")

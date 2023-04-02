@@ -47,7 +47,7 @@ from enum import Enum
 from importlib import import_module, reload
 from importlib.util import source_from_cache
 from types import FunctionType, MethodType
-from typing import Dict, Optional, Set, Type
+from typing import Dict, Optional, Set, Tuple, Type
 
 # -----------------------------------------------------------------------------
 #  Copyright (C) 2000 Thomas Heller
@@ -63,30 +63,19 @@ from typing import Dict, Optional, Set, Type
 # code by Thomas Heller.
 
 
-_ClassCallableTypes = (
-    FunctionType,
-    MethodType,
-    property,
-    functools.partial,
-    functools.partialmethod,
-)
-
-
 def isinstance2(a, b, typ):
     return isinstance(a, typ) and isinstance(b, typ)
 
 
 class ModuleReloader:
     # Placeholder for indicating an attribute is not found
-    _NOT_FOUND = object()
+    _NOT_FOUND: object = object()
 
     def __init__(self, shell=None):
         # Whether this reloader is enabled
         self.enabled = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
         self.failed = {}
-        # Modules specially marked as autoreloadable.
-        self.modules: Set[str] = set()
         # Modules specially marked as not autoreloadable.
         self.skip_modules: Set[str] = {
             "__main__",
@@ -128,13 +117,11 @@ class ModuleReloader:
 
     def mark_module_skipped(self, module_name):
         """Skip reloading the named module in the future"""
-        self.modules.discard(module_name)
         self.skip_modules.add(module_name)
 
     def mark_module_reloadable(self, module_name):
         """Reload the named module in the future (if it is imported)"""
         self.skip_modules.discard(module_name)
-        self.modules.add(module_name)
 
     def aimport_module(self, module_name):
         """Import a module, and mark it reloadable
@@ -454,6 +441,14 @@ class ModuleReloader:
             if type(ref) is old:
                 object.__setattr__(ref, "__class__", new)
 
+    _ClassCallableTypes: Tuple[Type[object], ...] = (
+        FunctionType,
+        MethodType,
+        property,
+        functools.partial,
+        functools.partialmethod,
+    )
+
     def _update_class(self, old: Type[object], new: Type[object]) -> None:
         """Replace stuff in the __dict__ of a class, and upgrade
         method code objects, and add new methods, if any"""
@@ -470,15 +465,15 @@ class ModuleReloader:
                 # numpy arrays using `==`
                 pass
             if new_obj is ModuleReloader._NOT_FOUND and isinstance(
-                old_obj, _ClassCallableTypes
+                old_obj, self._ClassCallableTypes
             ):
                 # obsolete attribute: remove it
                 try:
                     delattr(old, key)
                 except (AttributeError, TypeError):
                     pass
-            elif not isinstance(old_obj, _ClassCallableTypes) or not isinstance(
-                new_obj, _ClassCallableTypes
+            elif not isinstance(old_obj, self._ClassCallableTypes) or not isinstance(
+                new_obj, self._ClassCallableTypes
             ):
                 try:
                     # prefer the old version for non-functions
