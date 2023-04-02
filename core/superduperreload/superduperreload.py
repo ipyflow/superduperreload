@@ -59,8 +59,7 @@ from typing import Dict, Optional, Set, Tuple, Type
 #  the file COPYING, distributed as part of this software.
 # -----------------------------------------------------------------------------
 #
-# This IPython module is written by Pauli Virtanen, based on the autoreload
-# code by Thomas Heller.
+# This IPython module is based off code originally written by Pauli Virtanen and Thomas Heller.
 
 
 def isinstance2(a, b, typ):
