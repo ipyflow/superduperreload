@@ -77,14 +77,12 @@ def isinstance2(a, b, typ):
 
 
 class ModuleReloader:
-    # Whether this reloader is enabled
-    enabled = False
-    # Autoreload all modules, not just those listed in 'modules'
-    check_all = True
     # Placeholder for indicating an attribute is not found
     _NOT_FOUND = object()
 
     def __init__(self, shell=None):
+        # Whether this reloader is enabled
+        self.enabled = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
         self.failed = {}
         # Modules specially marked as autoreloadable.
@@ -114,7 +112,7 @@ class ModuleReloader:
         self._report = lambda msg: None  # by default, be quiet.
 
         # Cache module modification times
-        self.check(check_all=True, do_reload=False)
+        self.check(do_reload=False)
 
         self._update_rules = [
             (lambda a, b: isinstance2(a, b, type), self._update_class),
@@ -181,23 +179,12 @@ class ModuleReloader:
 
         return py_filename, pymtime
 
-    def check(self, check_all=False, do_reload=True):
+    def check(self, do_reload: bool = True) -> None:
         """Check whether some modules need to be reloaded."""
-
-        if not self.enabled and not check_all:
-            return
-
         self.reloaded_modules.clear()
         self.failed_modules.clear()
 
-        if check_all or self.check_all:
-            modules = list(sys.modules.keys())
-        else:
-            modules = list(self.modules)
-
-        for modname in modules:
-            m = sys.modules.get(modname, None)
-
+        for modname, m in list(sys.modules.items()):
             package_components = modname.split(".")
             if any(
                 ".".join(package_components[:idx]) in self.skip_modules

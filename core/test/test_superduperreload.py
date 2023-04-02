@@ -1,4 +1,4 @@
-"""Tests for autoreload extension.
+"""Tests for superduperreload extension.
 """
 # -----------------------------------------------------------------------------
 #  Copyright (c) 2012, IPython Development Team
@@ -37,7 +37,7 @@ except:  # noqa: E722
 
 if platform.python_implementation() == "PyPy":
     pytest.skip(
-        "Current autoreload implementation is extremely slow on PyPy",
+        "Current superduperreload implementation is extremely slow on PyPy",
         allow_module_level=True,
     )
 
@@ -121,8 +121,8 @@ class FakeShell:
     def push(self, items):
         self.ns.update(items)
 
-    def magic_autoreload(self, parameter):
-        self.auto_magics.autoreload(parameter)
+    def magic_superduperreload(self, parameter):
+        self.auto_magics.superduperreload(parameter)
 
     def magic_aimport(self, parameter, stream=None):
         self.auto_magics.aimport(parameter, stream=stream)
@@ -217,7 +217,7 @@ class TestAutoreload(Fixture):
                 B = 'B'
             """,
         )
-        self.shell.magic_autoreload("2")
+        self.shell.magic_superduperreload("on")
         self.shell.magic_aimport(mod_name)
         self.write_file(
             mod_fn,
@@ -234,7 +234,7 @@ class TestAutoreload(Fixture):
         assert self.reloader.failed_modules == []
 
     def test_reload_class_type(self):
-        self.shell.magic_autoreload("2")
+        self.shell.magic_superduperreload("on")
         mod_name, mod_fn = self.new_module(
             """
             class Test():
@@ -259,7 +259,7 @@ class TestAutoreload(Fixture):
 
         test_object = self.shell.ns["test"]
 
-        # important to trigger autoreload logic !
+        # important to trigger superduperreload logic !
         self.shell.run_code("pass")
 
         test_class = pickle_get_current_class(test_object)
@@ -270,7 +270,7 @@ class TestAutoreload(Fixture):
         self.shell.run_code("p = pickle.dumps(test)")
 
     def test_reload_class_attributes(self):
-        self.shell.magic_autoreload("2")
+        self.shell.magic_superduperreload("on")
         mod_name, mod_fn = self.new_module(
             """
             class MyClass:
@@ -329,7 +329,7 @@ class TestAutoreload(Fixture):
     if numpy is not None:
 
         def test_comparing_numpy_structures(self):
-            self.shell.magic_autoreload("2")
+            self.shell.magic_superduperreload("on")
             mod_name, mod_fn = self.new_module(
                 """
                 import numpy as np
@@ -358,8 +358,7 @@ class TestAutoreload(Fixture):
 
     @skipif_known_failing
     def test_autoload_newly_added_objects(self):
-        # All of these fail with %autoreload 2
-        self.shell.magic_autoreload("3")
+        self.shell.magic_superduperreload("on")
         mod_code = """
         def func1(): pass
         """
@@ -446,24 +445,22 @@ class TestAutoreload(Fixture):
         # Asserts correspondense between original mode names and their verbose equivalents.
         @dataclass
         class AutoreloadSettings:
-            check_all: bool
             enabled: bool
 
-        def gather_settings(mode):
-            self.shell.magic_autoreload(mode)
-            return AutoreloadSettings(
-                self.reloader.check_all,
-                self.reloader.enabled,
-            )
+        def is_enabled_for_mode(mode: str) -> bool:
+            self.shell.magic_superduperreload(mode)
+            return self.reloader.enabled
 
-        assert gather_settings("0") == gather_settings("off")
-        assert gather_settings("0") == gather_settings("OFF")  # Case insensitive
-        assert gather_settings("1") == gather_settings("explicit")
-        assert gather_settings("2") == gather_settings("all")
+        assert is_enabled_for_mode("0") == is_enabled_for_mode("off")
+        assert is_enabled_for_mode("0") == is_enabled_for_mode(
+            "OFF"
+        )  # Case insensitive
+        assert is_enabled_for_mode("1") == is_enabled_for_mode("on")
+        assert is_enabled_for_mode("2") == is_enabled_for_mode("on")
 
         # And an invalid mode name raises an exception.
         with self.assertRaises(ValueError):
-            self.shell.magic_autoreload("4")
+            self.shell.magic_superduperreload("4")
 
     def test_aimport_parsing(self):
         # Modules can be included or excluded all in one line.
@@ -471,7 +468,7 @@ class TestAutoreload(Fixture):
         assert "os" in self.reloader.modules
         assert "os" not in self.reloader.skip_modules
 
-        self.shell.magic_aimport("-math")  # forbid autoreloading of `math`
+        self.shell.magic_aimport("-math")  # forbid superduperreloading of `math`
         assert "math" in self.reloader.skip_modules
         assert "math" not in self.reloader.modules
 
@@ -483,8 +480,8 @@ class TestAutoreload(Fixture):
         assert "os" in self.reloader.skip_modules
         assert "os" not in self.reloader.modules
 
-    def test_autoreload_output(self):
-        self.shell.magic_autoreload("all")
+    def test_superduperreload_output(self):
+        self.shell.magic_superduperreload("on")
         mod_code = """
         def func1(): pass
         """
@@ -494,37 +491,41 @@ class TestAutoreload(Fixture):
         assert self.reloader.reloaded_modules == []
         assert self.reloader.failed_modules == []
 
-        self.shell.magic_autoreload("all --print")
+        self.shell.magic_superduperreload("on --print")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("all -p")
+        self.shell.magic_superduperreload("on -p")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("all --print --log")
+        self.shell.magic_superduperreload("on --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_autoreload("all --print --log")
+        self.shell.magic_superduperreload("on --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        with self.assertLogs(logger="autoreload") as lo:  # see something printed out
+        with self.assertLogs(
+            logger="superduperreload"
+        ) as lo:  # see something printed out
             self.shell.run_code("pass")
-        assert lo.output == [f"INFO:autoreload:Reloading '{mod_name}'."]
+        assert lo.output == [f"INFO:superduperreload:Reloading '{mod_name}'."]
 
-        self.shell.magic_autoreload("all -l")
+        self.shell.magic_superduperreload("on -l")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        with self.assertLogs(logger="autoreload") as lo:  # see something printed out
+        with self.assertLogs(
+            logger="superduperreload"
+        ) as lo:  # see something printed out
             self.shell.run_code("pass")
-        assert lo.output == [f"INFO:autoreload:Reloading '{mod_name}'."]
+        assert lo.output == [f"INFO:superduperreload:Reloading '{mod_name}'."]
 
-    def _check_smoketest(self, use_aimport=True):
+    def _check_smoketest(self) -> None:
         """
         Functional test for the automatic reloader using either
-        '%autoreload 1' or '%autoreload 2'
+        '%superduperreload 1' or '%superduperreload 2'
         """
 
         mod_name, mod_fn = self.new_module(
@@ -557,23 +558,11 @@ class TestAutoreload(Fixture):
         #
         # Import module, and mark for reloading
         #
-        if use_aimport:
-            self.shell.magic_autoreload("1")
-            self.shell.magic_aimport(mod_name)
-            stream = StringIO()
-            self.shell.magic_aimport("", stream=stream)
-            self.assertIn(("Modules to reload:\n%s" % mod_name), stream.getvalue())
-
-            with self.assertRaises(ImportError):
-                self.shell.magic_aimport("tmpmod_as318989e89ds")
-        else:
-            self.shell.magic_autoreload("2")
-            self.shell.run_code("import %s" % mod_name)
-            stream = StringIO()
-            self.shell.magic_aimport("", stream=stream)
-            self.assertTrue(
-                "Modules to reload:\nall-except-skipped" in stream.getvalue()
-            )
+        self.shell.magic_superduperreload("2")
+        self.shell.run_code("import %s" % mod_name)
+        stream = StringIO()
+        self.shell.magic_aimport("", stream=stream)
+        self.assertTrue("Modules to reload:\nall-except-skipped" in stream.getvalue())
         self.assertIn(mod_name, self.shell.ns)
 
         mod = sys.modules[mod_name]
@@ -680,18 +669,9 @@ class TestAutoreload(Fixture):
         check_module_contents()
 
         #
-        # Disable autoreload and rewrite module: no reload should occur
+        # Disable superduperreload and rewrite module: no reload should occur
         #
-        if use_aimport:
-            self.shell.magic_aimport("-" + mod_name)
-            stream = StringIO()
-            self.shell.magic_aimport("", stream=stream)
-            self.assertTrue(mod_name in stream.getvalue().strip().split())
-
-            # This should succeed, although no such module exists
-            self.shell.magic_aimport("-tmpmod_as318989e89ds")
-        else:
-            self.shell.magic_autoreload("0")
+        self.shell.magic_superduperreload("off")
 
         self.write_file(
             mod_fn,
@@ -705,18 +685,12 @@ class TestAutoreload(Fixture):
         check_module_contents()
 
         #
-        # Re-enable autoreload: reload should now occur
+        # Re-enable superduperreload: reload should now occur
         #
-        if use_aimport:
-            self.shell.magic_aimport(mod_name)
-        else:
-            self.shell.magic_autoreload("")
+        self.shell.magic_superduperreload("")
 
         self.shell.run_code("pass")  # trigger reload
         self.assertEqual(mod.x, -99)
 
-    def test_smoketest_aimport(self):
-        self._check_smoketest(use_aimport=True)
-
-    def test_smoketest_autoreload(self):
-        self._check_smoketest(use_aimport=False)
+    def test_smoketest(self):
+        self._check_smoketest()

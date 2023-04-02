@@ -103,7 +103,6 @@ class AutoreloadMagics(Magics):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self._reloader = ModuleReloader(self.shell)
-        self._reloader.check_all = False
         self.loaded_modules = set(sys.modules)
 
     @line_magic
@@ -118,14 +117,8 @@ class AutoreloadMagics(Magics):
 
              '0' or 'off' - Disable automatic reloading.
 
-             '1' or 'explicit' - Reload only modules imported with %%aimport every
-             time before executing the Python code typed.
-
-             '2' or 'all' - Reload all modules (except those excluded by %%aimport)
+             '1', '2' or 'on' - Reload all modules (except those excluded by %%aimport)
              every time before executing the Python code typed.
-
-             '3' or 'complete' - Same as 2/all, but also but also adds any new
-             objects in the module.
              """,
     )
     @magic_arguments.argument(
@@ -142,21 +135,17 @@ class AutoreloadMagics(Magics):
         default=False,
         help="Show autoreload activity using the logger",
     )
-    def autoreload(self, line=""):
-        r"""%autoreload => Reload modules automatically
+    def superduperreload(self, line=""):
+        r"""%superduperreload => Reload modules automatically
 
-        %autoreload or %autoreload now
+        %superduperreload or %superduperreload now
         Reload all modules (except those excluded by %aimport) automatically
         now.
 
-        %autoreload 0 or %autoreload off
+        %superduperreload 0 or %superduperreload off
         Disable automatic reloading.
 
-        %autoreload 1 or %autoreload explicit
-        Reload only modules imported with %aimport every time before executing
-        the Python code typed.
-
-        %autoreload 2 or %autoreload all
+        %superduperreload 1 or %superduperreload 2 or %superduperreload on
         Reload all modules (except those excluded by %aimport) every time
         before executing the Python code typed.
 
@@ -190,12 +179,12 @@ class AutoreloadMagics(Magics):
           autoreloaded.
 
         """
-        args = magic_arguments.parse_argstring(self.autoreload, line)
+        args = magic_arguments.parse_argstring(self.superduperreload, line)
         mode = args.mode.lower()
 
         p = print
 
-        logger = logging.getLogger("autoreload")
+        logger = logging.getLogger("superduperreload")
 
         l = logger.info
 
@@ -217,12 +206,8 @@ class AutoreloadMagics(Magics):
             self._reloader.check(True)
         elif mode == "0" or mode == "off":
             self._reloader.enabled = False
-        elif mode == "1" or mode == "explicit":
+        elif mode in ("1", "2") or mode == "on":
             self._reloader.enabled = True
-            self._reloader.check_all = False
-        elif mode == "2" or mode == "all":
-            self._reloader.enabled = True
-            self._reloader.check_all = True
         else:
             raise ValueError(f'Unrecognized autoreload mode "{mode}".')
 
@@ -245,14 +230,10 @@ class AutoreloadMagics(Magics):
         """
         modname = parameter_s
         if not modname:
-            to_reload = sorted(self._reloader.modules)
             to_skip = sorted(self._reloader.skip_modules)
             if stream is None:
                 stream = sys.stdout
-            if self._reloader.check_all:
-                stream.write("Modules to reload:\nall-except-skipped\n")
-            else:
-                stream.write("Modules to reload:\n%s\n" % " ".join(to_reload))
+            stream.write("Modules to reload:\nall-except-skipped\n")
             stream.write("\nModules to skip:\n%s\n" % " ".join(to_skip))
         else:
             for _module in [_.strip() for _ in modname.split(",")]:
