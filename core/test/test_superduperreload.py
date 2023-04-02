@@ -518,7 +518,7 @@ class TestAutoreload(Fixture):
             self.shell.run_code("pass")
         assert lo.output == [f"INFO:superduperreload:Reloading '{mod_name}'."]
 
-    def _check_smoketest(self) -> None:
+    def test_smoketest(self) -> None:
         """
         Functional test for the automatic reloader using either
         '%superduperreload 1' or '%superduperreload 2'
@@ -688,5 +688,42 @@ class TestAutoreload(Fixture):
         self.shell.run_code("pass")  # trigger reload
         self.assertEqual(mod.x, -99)
 
-    def test_smoketest(self):
-        self._check_smoketest()
+    def test_decorators(self):
+        mod_name, mod_file = self.new_module(
+            """
+            def incremented(f):
+                return lambda *args: f(*args) + 1
+            
+            class Foo:
+                @incremented
+                def foo(self):
+                    return 42
+            """
+        )
+        self.shell.run_code(f"from {mod_name} import Foo")
+        self.shell.run_code("foo = Foo()")
+        self.shell.run_code("assert foo.foo() == 43")
+        self.write_file(
+            mod_file,
+            """
+            class Foo:
+                def foo(self):
+                    return 42
+            """,
+        )
+        self.shell.run_code("assert foo.foo() == 42")
+        self.write_file(
+            mod_file,
+            """
+            def incremented(v):
+                def deco(f):
+                    return lambda *args: f(*args) + v
+                return deco
+
+            class Foo:
+                @incremented(2)
+                def foo(self):
+                    return 42
+            """,
+        )
+        self.shell.run_code("assert foo.foo() == 44")
