@@ -765,3 +765,39 @@ class TestAutoreload(Fixture):
             """,
         )
         self.shell.run_code("assert foo() != res")
+
+    def test_method_decorators_again(self):
+        mod_name, mod_file = self.new_module(
+            """
+            class Foo:
+                @classmethod
+                def bar(cls):
+                    return 0
+                    
+                @classmethod
+                def foo(cls):
+                    return 42 + cls.bar()
+            
+            foo = Foo.foo
+            """
+        )
+        self.shell.run_code(f"from {mod_name} import foo")
+        self.shell.run_code("assert foo() == 42")
+        self.write_file(
+            mod_file,
+            """
+            class Foo:
+                @classmethod
+                def bar(cls):
+                    # for some reason this comment needs to be present for this to pass;
+                    # figure out why
+                    return 1
+            
+                @classmethod
+                def foo(cls):
+                    return 42 + cls.bar()
+            
+            foo = Foo.foo
+            """,
+        )
+        self.shell.run_code("assert foo() == 43")
