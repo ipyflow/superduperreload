@@ -688,7 +688,7 @@ class TestAutoreload(Fixture):
         self.shell.run_code("pass")  # trigger reload
         self.assertEqual(mod.x, -99)
 
-    def test_decorators(self):
+    def test_function_decorators(self):
         mod_name, mod_file = self.new_module(
             """
             def incremented(f):
@@ -723,3 +723,45 @@ class TestAutoreload(Fixture):
             """,
         )
         self.shell.run_code("assert foo() == 45")
+
+    def test_method_decorators(self):
+        mod_name, mod_file = self.new_module(
+            """
+            def incremented(f):
+                return lambda *args: f(*args) + 1
+
+            class Foo:
+                @classmethod
+                @incremented
+                def foo(cls):
+                    return 42
+            
+            foo = Foo.foo
+            """
+        )
+        self.shell.run_code(f"from {mod_name} import foo")
+        self.shell.run_code("assert foo() == 43")
+        self.write_file(
+            mod_file,
+            """
+            class Foo:
+                @classmethod
+                def foo(cls):
+                    return 42 + id(cls)
+            
+            foo = Foo.foo
+            """,
+        )
+        self.shell.run_code("res = foo()")
+        self.write_file(
+            mod_file,
+            """
+            class Foo:
+                @classmethod
+                def foo(cls):
+                    return 42 + id(cls)
+            
+            foo = Foo.foo
+            """,
+        )
+        self.shell.run_code("assert foo() != res")
