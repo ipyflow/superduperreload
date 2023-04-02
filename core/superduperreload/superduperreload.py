@@ -409,7 +409,7 @@ class ModuleReloader:
         for name in self._FUNC_ATTRS:
             try:
                 setattr(old, name, getattr(new, name))
-            except (AttributeError, TypeError):
+            except (AttributeError, TypeError, ValueError):
                 self._try_upgrade_readonly_attr(
                     self._CPythonStructType.FUNCTION, old, new, name
                 )

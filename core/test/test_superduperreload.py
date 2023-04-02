@@ -694,24 +694,21 @@ class TestAutoreload(Fixture):
             def incremented(f):
                 return lambda *args: f(*args) + 1
             
-            class Foo:
-                @incremented
-                def foo(self):
-                    return 42
+            @incremented
+            def foo():
+                return 42
             """
         )
-        self.shell.run_code(f"from {mod_name} import Foo")
-        self.shell.run_code("foo = Foo()")
-        self.shell.run_code("assert foo.foo() == 43")
+        self.shell.run_code(f"from {mod_name} import foo")
+        self.shell.run_code("assert foo() == 43")
         self.write_file(
             mod_file,
             """
-            class Foo:
-                def foo(self):
-                    return 42
+            def foo():
+                return 42
             """,
         )
-        self.shell.run_code("assert foo.foo() == 42")
+        self.shell.run_code("assert foo() == 42")
         self.write_file(
             mod_file,
             """
@@ -720,10 +717,9 @@ class TestAutoreload(Fixture):
                     return lambda *args: f(*args) + v
                 return deco
 
-            class Foo:
-                @incremented(2)
-                def foo(self):
-                    return 42
+            @incremented(2)
+            def foo():
+                return 43
             """,
         )
-        self.shell.run_code("assert foo.foo() == 44")
+        self.shell.run_code("assert foo() == 45")
