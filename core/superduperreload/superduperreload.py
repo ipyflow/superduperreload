@@ -306,25 +306,23 @@ class ModuleReloader:
         "__globals__",
     ]
 
-    class CPythonStructType(Enum):
+    class _CPythonStructType(Enum):
         CLASS = "class"
         FUNCTION = "function"
         METHOD = "method"
         PARTIAL = "partial"
         PARTIALMETHOD = "partialmethod"
 
-    _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[str, Dict[str, int]] = {
-        CPythonStructType.CLASS.value: {},
-        CPythonStructType.FUNCTION.value: {},
-        CPythonStructType.METHOD.value: {},
-    }
+    _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[
+        _CPythonStructType, Dict[str, int]
+    ] = {field_type: {} for field_type in _CPythonStructType}
 
     _MAX_FIELD_SEARCH_OFFSET = 50
 
     @classmethod
     def _infer_field_offset(
         cls,
-        struct_type: "CPythonStructType",
+        struct_type: "_CPythonStructType",
         obj: object,
         field: str,
         cache: bool = True,
@@ -333,9 +331,7 @@ class ModuleReloader:
         if field_value is cls._NOT_FOUND:
             return -1
         if cache:
-            offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[
-                struct_type.value
-            ]
+            offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[struct_type]
         else:
             offset_tab = {}
         ret = offset_tab.get(field)
@@ -362,7 +358,7 @@ class ModuleReloader:
     @classmethod
     def _try_write_readonly_attr(
         cls,
-        struct_type: "CPythonStructType",
+        struct_type: "_CPythonStructType",
         obj: object,
         field: str,
         new_value: object,
@@ -388,7 +384,7 @@ class ModuleReloader:
     @classmethod
     def _try_upgrade_readonly_attr(
         cls,
-        struct_type: "CPythonStructType",
+        struct_type: "_CPythonStructType",
         old: object,
         new: object,
         field: str,
@@ -415,7 +411,7 @@ class ModuleReloader:
                 setattr(old, name, getattr(new, name))
             except (AttributeError, TypeError):
                 self._try_upgrade_readonly_attr(
-                    self.CPythonStructType.FUNCTION, old, new, name
+                    self._CPythonStructType.FUNCTION, old, new, name
                 )
 
     def _update_method(self, old: MethodType, new: MethodType):
@@ -423,7 +419,7 @@ class ModuleReloader:
             return
         self._update_function(old.__func__, new.__func__)
         self._try_upgrade_readonly_attr(
-            self.CPythonStructType.METHOD, old, new, "__self__"
+            self._CPythonStructType.METHOD, old, new, "__self__"
         )
 
     @classmethod
@@ -511,10 +507,10 @@ class ModuleReloader:
             return
         self._update_function(old.func, new.func)
         self._try_upgrade_readonly_attr(
-            self.CPythonStructType.PARTIAL, old, new, "args"
+            self._CPythonStructType.PARTIAL, old, new, "args"
         )
         self._try_upgrade_readonly_attr(
-            self.CPythonStructType.PARTIAL, old, new, "keywords"
+            self._CPythonStructType.PARTIAL, old, new, "keywords"
         )
 
     def _update_partialmethod(
@@ -524,10 +520,10 @@ class ModuleReloader:
             return
         self._update_method(old.func, new.func)  # type: ignore
         self._try_upgrade_readonly_attr(
-            self.CPythonStructType.PARTIALMETHOD, old, new, "args"
+            self._CPythonStructType.PARTIALMETHOD, old, new, "args"
         )
         self._try_upgrade_readonly_attr(
-            self.CPythonStructType.PARTIALMETHOD, old, new, "keywords"
+            self._CPythonStructType.PARTIALMETHOD, old, new, "keywords"
         )
 
     def _update_generic(self, old: object, new: object) -> None:
