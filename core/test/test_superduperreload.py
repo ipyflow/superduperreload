@@ -35,12 +35,6 @@ try:
 except:  # noqa: E722
     numpy = None
 
-if platform.python_implementation() == "PyPy":
-    pytest.skip(
-        "Current superduperreload implementation is extremely slow on PyPy",
-        allow_module_level=True,
-    )
-
 
 def should_skip_known_failing(reason="this test tests unimpled functionality"):
     return {

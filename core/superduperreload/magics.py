@@ -88,6 +88,7 @@ The following magic commands are provided:
 # code by Thomas Heller.
 
 import logging
+import platform
 import sys
 
 from IPython.core import magic_arguments
@@ -101,6 +102,8 @@ __skip_doctest__ = True
 @magics_class
 class AutoreloadMagics(Magics):
     def __init__(self, *a, **kw):
+        if platform.python_implementation().lower() != "cpython":
+            raise RuntimeError("CPython required for superduperreload extension")
         super().__init__(*a, **kw)
         self._reloader = ModuleReloader(self.shell)
         self.loaded_modules = set(sys.modules)
