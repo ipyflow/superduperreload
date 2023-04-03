@@ -19,10 +19,6 @@ following things to work:
 
 Some of the known remaining caveats are:
 
-- Replacing code objects does not always succeed: changing a @property
-  in a class to an ordinary method or a method to a member variable
-  can cause problems (but in old objects only).
-
 - Functions that are removed (eg. via monkey-patching) from a module
   before it is reloaded are not upgraded.
 
