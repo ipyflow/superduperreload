@@ -42,8 +42,14 @@ import weakref
 from enum import Enum
 from importlib import import_module, reload
 from importlib.util import source_from_cache
-from types import FunctionType, MethodType
-from typing import Dict, Optional, Set, Tuple, Type
+from types import FunctionType, MethodType, ModuleType
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Type, Union
+
+if TYPE_CHECKING:
+    from IPython import InteractiveShell
+
+    from ..test.test_superduperreload import FakeShell
+
 
 # -----------------------------------------------------------------------------
 #  Copyright (C) 2000 Thomas Heller
@@ -66,11 +72,13 @@ class ModuleReloader:
     # Placeholder for indicating an attribute is not found
     _NOT_FOUND: object = object()
 
-    def __init__(self, shell=None):
+    def __init__(
+        self, shell: Optional[Union["InteractiveShell", "FakeShell"]] = None
+    ) -> None:
         # Whether this reloader is enabled
         self.enabled = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
-        self.failed = {}
+        self.failed: Dict[str, float] = {}
         # Modules specially marked as not autoreloadable.
         self.skip_modules: Set[str] = {
             "__main__",
@@ -82,15 +90,17 @@ class ModuleReloader:
             "sys",
         }
         # (module-name, name) -> weakref, for replacing old code objects
-        self.old_objects = {}
+        self.old_objects: Dict[
+            Tuple[str, str], List[weakref.ReferenceType[object]]
+        ] = {}
         # object ids updated during a round of superduperreload
         self._updated_obj_ids: Set[int] = set()
         # Module modification timestamps
-        self.modules_mtimes = {}
+        self.modules_mtimes: Dict[str, float] = {}
         self.shell = shell
 
-        self.reloaded_modules = []
-        self.failed_modules = []
+        self.reloaded_modules: List[str] = []
+        self.failed_modules: List[str] = []
 
         # Reporting callable for verbosity
         self._report = lambda msg: None  # by default, be quiet.
@@ -110,15 +120,15 @@ class ModuleReloader:
             ),
         ]
 
-    def mark_module_skipped(self, module_name):
+    def mark_module_skipped(self, module_name: str) -> None:
         """Skip reloading the named module in the future"""
         self.skip_modules.add(module_name)
 
-    def mark_module_reloadable(self, module_name):
+    def mark_module_reloadable(self, module_name: str) -> None:
         """Reload the named module in the future (if it is imported)"""
         self.skip_modules.discard(module_name)
 
-    def aimport_module(self, module_name):
+    def aimport_module(self, module_name: str) -> Tuple[ModuleType, str]:
         """Import a module, and mark it reloadable
 
         Returns
@@ -136,7 +146,9 @@ class ModuleReloader:
         top_module = sys.modules[top_name]
         return top_module, top_name
 
-    def filename_and_mtime(self, module):
+    def filename_and_mtime(
+        self, module: ModuleType
+    ) -> Tuple[Optional[str], Optional[float]]:
         if getattr(module, "__name__", None) is None:
             return None, None
 
@@ -209,7 +221,7 @@ class ModuleReloader:
                 self.failed[py_filename] = pymtime
                 self.failed_modules.append(modname)
 
-    def append_obj(self, module, name, obj):
+    def append_obj(self, module: ModuleType, name: str, obj: object) -> bool:
         in_module = hasattr(obj, "__module__") and obj.__module__ == module.__name__
         if not in_module:
             return False
@@ -222,7 +234,7 @@ class ModuleReloader:
             pass
         return True
 
-    def superduperreload(self, module):
+    def superduperreload(self, module: ModuleType) -> ModuleType:
         """Enhanced version of the superreload function from IPython's autoreload extension.
 
         superduperreload remembers objects previously in the module, and
@@ -440,11 +452,7 @@ class ModuleReloader:
         functools.partialmethod,
     )
 
-    def _update_class(self, old: Type[object], new: Type[object]) -> None:
-        """Replace stuff in the __dict__ of a class, and upgrade
-        method code objects, and add new methods, if any"""
-        if old is new:
-            return
+    def _update_class_members(self, old: Type[object], new: Type[object]) -> None:
         for key in list(old.__dict__.keys()):
             old_obj = getattr(old, key)
             new_obj = getattr(new, key, ModuleReloader._NOT_FOUND)
@@ -479,7 +487,6 @@ class ModuleReloader:
                     pass  # skip non-writable attributes
 
             self._update_generic(old_obj, new_obj)
-
         for key in list(new.__dict__.keys()):
             if key not in list(old.__dict__.keys()):
                 try:
@@ -487,7 +494,12 @@ class ModuleReloader:
                 except (AttributeError, TypeError):
                     pass  # skip non-writable attributes
 
-        # update all instances of class
+    def _update_class(self, old: Type[object], new: Type[object]) -> None:
+        """Replace stuff in the __dict__ of a class, and upgrade
+        method code objects, and add new methods, if any"""
+        if old is new:
+            return
+        self._update_class_members(old, new)
         self._update_instances(old, new)
 
     def _update_property(self, old: property, new: property) -> None:
