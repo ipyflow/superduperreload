@@ -43,7 +43,17 @@ from enum import Enum
 from importlib import import_module, reload
 from importlib.util import source_from_cache
 from types import FunctionType, MethodType, ModuleType
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Type,
+    Union,
+)
 
 if TYPE_CHECKING:
     from IPython import InteractiveShell
@@ -120,6 +130,13 @@ class ModuleReloader:
             ),
         ]
 
+        # TODO: add tests for referrer patching
+        self._patch_referrers: bool = False
+        self._referrer_patch_rules: List[Tuple[Type[object], Callable[..., None]]] = [
+            (list, self._patch_list_referrer),
+            (dict, self._patch_dict_referrer),
+        ]
+
     def mark_module_skipped(self, module_name: str) -> None:
         """Skip reloading the named module in the future"""
         self.skip_modules.add(module_name)
@@ -178,6 +195,7 @@ class ModuleReloader:
         self.reloaded_modules.clear()
         self.failed_modules.clear()
 
+        # TODO: we should try to reload the modules in topological order
         for modname, m in list(sys.modules.items()):
             package_components = modname.split(".")
             if any(
@@ -534,6 +552,26 @@ class ModuleReloader:
             self._CPythonStructType.PARTIALMETHOD, old, new, "keywords"
         )
 
+    _MAX_REFERRERS_FOR_PATCHING = 512
+
+    def _patch_list_referrer(self, ref: List[object], old: object, new: object) -> None:
+        for i, obj in enumerate(ref):
+            if obj is old:
+                ref[i] = new
+
+    def _patch_dict_referrer(
+        self, ref: Dict[object, object], old: object, new: object
+    ) -> None:
+        # reinsert everything in the dict in iteration order, updating refs of 'old' to 'new'
+        for k, v in dict(ref).items():
+            if k is old:
+                del ref[k]
+                k = new
+            if v is old:
+                ref[k] = new
+            else:
+                ref[k] = v
+
     def _update_generic(self, old: object, new: object) -> None:
         if old is new:
             return
@@ -544,4 +582,13 @@ class ModuleReloader:
         for type_check, update in self._update_rules:
             if type_check(old, new):
                 update(old, new)
-                return
+                break
+        if not self._patch_referrers:
+            return
+        referrers = gc.get_referrers(old)
+        if len(referrers) >= self._MAX_REFERRERS_FOR_PATCHING:
+            return
+        for typ, referrer_patcher in self._referrer_patch_rules:
+            if isinstance(referrers, typ):
+                referrer_patcher(referrers, old, new)
+                break
