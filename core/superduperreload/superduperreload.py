@@ -74,6 +74,14 @@ if TYPE_CHECKING:
 # This IPython module is based off code originally written by Pauli Virtanen and Thomas Heller.
 
 
+if sys.maxsize > 2**32:
+    WORD_TYPE = ctypes.c_int64
+    WORD_N_BYTES = 8
+else:
+    WORD_TYPE = ctypes.c_int32
+    WORD_N_BYTES = 4
+
+
 def isinstance2(a, b, typ):
     return isinstance(a, typ) and isinstance(b, typ)
 
@@ -372,7 +380,7 @@ class ModuleReloader:
         for offset in range(1, cls._MAX_FIELD_SEARCH_OFFSET):
             if (
                 ctypes.cast(
-                    obj_addr + 8 * offset, ctypes.POINTER(ctypes.c_int64)
+                    obj_addr + WORD_N_BYTES * offset, ctypes.POINTER(WORD_TYPE)
                 ).contents.value
                 == field_addr
             ):
@@ -404,7 +412,7 @@ class ModuleReloader:
         ctypes.pythonapi.Py_DecRef(ctypes.py_object(prev_value))
         ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_value))
         ctypes.cast(
-            obj_addr + 8 * offset, ctypes.POINTER(ctypes.c_int64)
+            obj_addr + WORD_N_BYTES * offset, ctypes.POINTER(WORD_TYPE)
         ).contents.value = new_value_addr
 
     @classmethod
