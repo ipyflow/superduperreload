@@ -343,7 +343,7 @@ class ModuleReloader:
         _CPythonStructType, Dict[str, int]
     ] = {field_type: {} for field_type in _CPythonStructType}
 
-    _MAX_FIELD_SEARCH_OFFSET = 50
+    _MAX_FIELD_SEARCH_OFFSET = 100
 
     @classmethod
     def _infer_field_offset(
@@ -355,6 +355,7 @@ class ModuleReloader:
     ) -> int:
         field_value = getattr(obj, field, cls._NOT_FOUND)
         if field_value is cls._NOT_FOUND:
+            print("field", field, "not found")
             return -1
         if cache:
             offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[struct_type]
@@ -367,6 +368,7 @@ class ModuleReloader:
         field_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(field_value)).value
         if obj_addr is None or field_addr is None:
             offset_tab[field] = -1
+            print("field", field, "obj_addr", obj_addr, "field_addr", field_addr)
             return -1
         ret = -1
         for offset in range(1, cls._MAX_FIELD_SEARCH_OFFSET):
@@ -378,6 +380,8 @@ class ModuleReloader:
             ):
                 ret = offset
                 break
+        if ret == -1:
+            print("unable to find field", field)
         offset_tab[field] = ret
         return ret
 
