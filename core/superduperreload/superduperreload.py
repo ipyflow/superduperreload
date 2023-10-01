@@ -75,7 +75,7 @@ if TYPE_CHECKING:
 
 
 if sys.maxsize > 2**32:
-    WORD_TYPE = ctypes.c_int64
+    WORD_TYPE: Union[Type[ctypes.c_int32], Type[ctypes.c_int64]] = ctypes.c_int64
     WORD_N_BYTES = 8
 else:
     WORD_TYPE = ctypes.c_int32
