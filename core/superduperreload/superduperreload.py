@@ -395,7 +395,6 @@ class ModuleReloader:
             return
         if offset is None:
             offset = cls._infer_field_offset(struct_type, obj, field)
-        print("field:", field, "offset:", offset)
         if offset == -1:
             return
         obj_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(obj)).value
