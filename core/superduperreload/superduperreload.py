@@ -409,8 +409,10 @@ class ModuleReloader:
         new_value_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(new_value)).value
         if obj_addr is None or new_value_addr is None:
             return
-        ctypes.pythonapi.Py_DecRef(ctypes.py_object(prev_value))
-        ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_value))
+        if prev_value is not None:
+            ctypes.pythonapi.Py_DecRef(ctypes.py_object(prev_value))
+        if new_value is not None:
+            ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_value))
         ctypes.cast(
             obj_addr + WORD_N_BYTES * offset, ctypes.POINTER(WORD_TYPE)
         ).contents.value = new_value_addr
