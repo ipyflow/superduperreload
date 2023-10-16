@@ -40,7 +40,7 @@ import sys
 import traceback
 import weakref
 from enum import Enum
-from importlib import import_module, reload
+from importlib import import_module
 from importlib.util import source_from_cache
 from types import FunctionType, MethodType, ModuleType
 from typing import (
@@ -54,6 +54,8 @@ from typing import (
     Type,
     Union,
 )
+
+from superduperreload.functional_reload import exec_module_for_new_dict
 
 if TYPE_CHECKING:
     from IPython import InteractiveShell
@@ -276,25 +278,11 @@ class ModuleReloader:
             if not self.append_obj(module, name, obj):
                 continue
 
-        # reload module
-        old_dict = None
-        try:
-            # first save a reference to previous stuff
-            old_dict = module.__dict__.copy()
-        except (TypeError, AttributeError, KeyError):
-            pass
-
-        try:
-            module = reload(module)
-        except BaseException:
-            # restore module dictionary on failed reload
-            if old_dict is not None:
-                module.__dict__.clear()
-                module.__dict__.update(old_dict)
-            raise
-
+        new_dict = exec_module_for_new_dict(module)
+        # atomically update the module
+        module.__dict__.update(new_dict)
         # iterate over all objects and update functions & classes
-        for name, new_obj in list(module.__dict__.items()):
+        for name, new_obj in list(new_dict.items()):
             key = (module.__name__, name)
             if key not in self.old_objects:
                 continue
