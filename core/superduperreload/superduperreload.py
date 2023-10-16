@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Core superduperreload functionality.
 
@@ -32,30 +33,17 @@ Some of the known remaining caveats are:
 
 __skip_doctest__ = True
 
-import ctypes
-import functools
-import gc
 import os
 import sys
 import traceback
 import weakref
-from enum import Enum
 from importlib import import_module
 from importlib.util import source_from_cache
-from types import FunctionType, MethodType, ModuleType
-from typing import (
-    TYPE_CHECKING,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    Union,
-)
+from types import ModuleType
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from superduperreload.functional_reload import exec_module_for_new_dict
+from superduperreload.patching import ObjectPatcher
 
 if TYPE_CHECKING:
     from IPython import InteractiveShell
@@ -76,25 +64,13 @@ if TYPE_CHECKING:
 # This IPython module is based off code originally written by Pauli Virtanen and Thomas Heller.
 
 
-if sys.maxsize > 2**32:
-    WORD_TYPE: Union[Type[ctypes.c_int32], Type[ctypes.c_int64]] = ctypes.c_int64
-    WORD_N_BYTES = 8
-else:
-    WORD_TYPE = ctypes.c_int32
-    WORD_N_BYTES = 4
-
-
-def isinstance2(a, b, typ):
-    return isinstance(a, typ) and isinstance(b, typ)
-
-
-class ModuleReloader:
+class ModuleReloader(ObjectPatcher):
     # Placeholder for indicating an attribute is not found
-    _NOT_FOUND: object = object()
 
     def __init__(
         self, shell: Optional[Union["InteractiveShell", "FakeShell"]] = None
     ) -> None:
+        super().__init__()
         # Whether this reloader is enabled
         self.enabled = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
@@ -113,8 +89,6 @@ class ModuleReloader:
         self.old_objects: Dict[
             Tuple[str, str], List[weakref.ReferenceType[object]]
         ] = {}
-        # object ids updated during a round of superduperreload
-        self._updated_obj_ids: Set[int] = set()
         # Module modification timestamps
         self.modules_mtimes: Dict[str, float] = {}
         self.shell = shell
@@ -127,25 +101,6 @@ class ModuleReloader:
 
         # Cache module modification times
         self.check(do_reload=False)
-
-        self._update_rules = [
-            (lambda a, b: isinstance2(a, b, type), self._update_class),
-            (lambda a, b: isinstance2(a, b, FunctionType), self._update_function),
-            (lambda a, b: isinstance2(a, b, MethodType), self._update_method),
-            (lambda a, b: isinstance2(a, b, property), self._update_property),
-            (lambda a, b: isinstance2(a, b, functools.partial), self._update_partial),
-            (
-                lambda a, b: isinstance2(a, b, functools.partialmethod),
-                self._update_partialmethod,
-            ),
-        ]
-
-        # TODO: add tests for referrer patching
-        self._patch_referrers: bool = False
-        self._referrer_patch_rules: List[Tuple[Type[object], Callable[..., None]]] = [
-            (list, self._patch_list_referrer),
-            (dict, self._patch_dict_referrer),
-        ]
 
     def mark_module_skipped(self, module_name: str) -> None:
         """Skip reloading the named module in the future"""
@@ -271,7 +226,7 @@ class ModuleReloader:
         - upgrades the code object of every old function and method
         - clears the module's namespace before reloading
         """
-        self._updated_obj_ids.clear()
+        self._patched_obj_ids.clear()
 
         # collect old objects in the module
         for name, obj in list(module.__dict__.items()):
@@ -295,7 +250,8 @@ class ModuleReloader:
                 new_refs.append(old_ref)
                 if old_obj is new_obj:
                     continue
-                self._update_generic(old_obj, new_obj)
+                self._patch_generic(old_obj, new_obj)
+                self._patch_referrers_generic(old_obj, new_obj)
 
             if new_refs:
                 self.old_objects[key] = new_refs
@@ -303,290 +259,3 @@ class ModuleReloader:
                 self.old_objects.pop(key, None)
 
         return module
-
-    # ------------------------------------------------------------------------------
-    # superduperreload helpers
-    # ------------------------------------------------------------------------------
-
-    _MOD_ATTRS = [
-        "__name__",
-        "__doc__",
-        "__package__",
-        "__loader__",
-        "__spec__",
-        "__file__",
-        "__cached__",
-        "__builtins__",
-    ]
-
-    _FUNC_ATTRS = [
-        "__closure__",
-        "__code__",
-        "__defaults__",
-        "__doc__",
-        "__dict__",
-        "__globals__",
-    ]
-
-    class _CPythonStructType(Enum):
-        CLASS = "class"
-        FUNCTION = "function"
-        METHOD = "method"
-        PARTIAL = "partial"
-        PARTIALMETHOD = "partialmethod"
-
-    _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[
-        _CPythonStructType, Dict[str, int]
-    ] = {field_type: {} for field_type in _CPythonStructType}
-
-    _MAX_FIELD_SEARCH_OFFSET = 50
-
-    @classmethod
-    def _infer_field_offset(
-        cls,
-        struct_type: "_CPythonStructType",
-        obj: object,
-        field: str,
-        cache: bool = True,
-    ) -> int:
-        field_value = getattr(obj, field, cls._NOT_FOUND)
-        if field_value is cls._NOT_FOUND:
-            return -1
-        if cache:
-            offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[struct_type]
-        else:
-            offset_tab = {}
-        ret = offset_tab.get(field)
-        if ret is not None:
-            return ret
-        obj_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(obj)).value
-        field_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(field_value)).value
-        if obj_addr is None or field_addr is None:
-            offset_tab[field] = -1
-            return -1
-        ret = -1
-        for offset in range(1, cls._MAX_FIELD_SEARCH_OFFSET):
-            if (
-                ctypes.cast(
-                    obj_addr + WORD_N_BYTES * offset, ctypes.POINTER(WORD_TYPE)
-                ).contents.value
-                == field_addr
-            ):
-                ret = offset
-                break
-        offset_tab[field] = ret
-        return ret
-
-    @classmethod
-    def _try_write_readonly_attr(
-        cls,
-        struct_type: "_CPythonStructType",
-        obj: object,
-        field: str,
-        new_value: object,
-        offset: Optional[int] = None,
-    ) -> None:
-        prev_value = getattr(obj, field, cls._NOT_FOUND)
-        if prev_value is cls._NOT_FOUND:
-            return
-        if offset is None:
-            offset = cls._infer_field_offset(struct_type, obj, field)
-        if offset == -1:
-            return
-        obj_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(obj)).value
-        new_value_addr = ctypes.c_void_p.from_buffer(ctypes.py_object(new_value)).value
-        if obj_addr is None or new_value_addr is None:
-            return
-        if prev_value is not None:
-            ctypes.pythonapi.Py_DecRef(ctypes.py_object(prev_value))
-        if new_value is not None:
-            ctypes.pythonapi.Py_IncRef(ctypes.py_object(new_value))
-        ctypes.cast(
-            obj_addr + WORD_N_BYTES * offset, ctypes.POINTER(WORD_TYPE)
-        ).contents.value = new_value_addr
-
-    @classmethod
-    def _try_upgrade_readonly_attr(
-        cls,
-        struct_type: "_CPythonStructType",
-        old: object,
-        new: object,
-        field: str,
-    ) -> None:
-        old_value = getattr(old, field, cls._NOT_FOUND)
-        new_value = getattr(new, field, cls._NOT_FOUND)
-        if old_value is cls._NOT_FOUND or new_value is cls._NOT_FOUND:
-            return
-        elif old_value is new_value:
-            return
-        elif old_value is not None:
-            offset = cls._infer_field_offset(struct_type, old, field)
-        else:
-            assert new_value is not None
-            offset = cls._infer_field_offset(struct_type, new, field)
-        cls._try_write_readonly_attr(struct_type, old, field, new_value, offset=offset)
-
-    def _update_function(self, old, new):
-        """Upgrade the code object of a function"""
-        if old is new:
-            return
-        for name in self._FUNC_ATTRS:
-            try:
-                setattr(old, name, getattr(new, name))
-            except (AttributeError, TypeError, ValueError):
-                self._try_upgrade_readonly_attr(
-                    self._CPythonStructType.FUNCTION, old, new, name
-                )
-
-    def _update_method(self, old: MethodType, new: MethodType):
-        if old is new:
-            return
-        self._update_function(old.__func__, new.__func__)
-        self._try_upgrade_readonly_attr(
-            self._CPythonStructType.METHOD, old, new, "__self__"
-        )
-
-    @classmethod
-    def _update_instances(cls, old, new):
-        """Use garbage collector to find all instances that refer to the old
-        class definition and update their __class__ to point to the new class
-        definition"""
-        if old is new:
-            return
-
-        refs = gc.get_referrers(old)
-
-        for ref in refs:
-            if type(ref) is old:
-                object.__setattr__(ref, "__class__", new)
-
-    _ClassCallableTypes: Tuple[Type[object], ...] = (
-        FunctionType,
-        MethodType,
-        property,
-        functools.partial,
-        functools.partialmethod,
-    )
-
-    def _update_class_members(self, old: Type[object], new: Type[object]) -> None:
-        for key in list(old.__dict__.keys()):
-            old_obj = getattr(old, key)
-            new_obj = getattr(new, key, ModuleReloader._NOT_FOUND)
-            try:
-                if (old_obj == new_obj) is True:
-                    continue
-            except ValueError:
-                # can't compare nested structures containing
-                # numpy arrays using `==`
-                pass
-            if new_obj is ModuleReloader._NOT_FOUND and isinstance(
-                old_obj, self._ClassCallableTypes
-            ):
-                # obsolete attribute: remove it
-                try:
-                    delattr(old, key)
-                except (AttributeError, TypeError):
-                    pass
-            elif not isinstance(old_obj, self._ClassCallableTypes) or not isinstance(
-                new_obj, self._ClassCallableTypes
-            ):
-                try:
-                    # prefer the old version for non-functions
-                    setattr(new, key, old_obj)
-                except (AttributeError, TypeError):
-                    pass  # skip non-writable attributes
-            else:
-                try:
-                    # prefer the new version for functions
-                    setattr(old, key, new_obj)
-                except (AttributeError, TypeError):
-                    pass  # skip non-writable attributes
-
-            self._update_generic(old_obj, new_obj)
-        for key in list(new.__dict__.keys()):
-            if key not in list(old.__dict__.keys()):
-                try:
-                    setattr(old, key, getattr(new, key))
-                except (AttributeError, TypeError):
-                    pass  # skip non-writable attributes
-
-    def _update_class(self, old: Type[object], new: Type[object]) -> None:
-        """Replace stuff in the __dict__ of a class, and upgrade
-        method code objects, and add new methods, if any"""
-        if old is new:
-            return
-        self._update_class_members(old, new)
-        self._update_instances(old, new)
-
-    def _update_property(self, old: property, new: property) -> None:
-        """Replace get/set/del functions of a property"""
-        if old is new:
-            return
-        self._update_generic(old.fdel, new.fdel)
-        self._update_generic(old.fget, new.fget)
-        self._update_generic(old.fset, new.fset)
-
-    def _update_partial(self, old: functools.partial, new: functools.partial) -> None:
-        if old is new:
-            return
-        self._update_function(old.func, new.func)
-        self._try_upgrade_readonly_attr(
-            self._CPythonStructType.PARTIAL, old, new, "args"
-        )
-        self._try_upgrade_readonly_attr(
-            self._CPythonStructType.PARTIAL, old, new, "keywords"
-        )
-
-    def _update_partialmethod(
-        self, old: functools.partialmethod, new: functools.partialmethod
-    ) -> None:
-        if old is new:
-            return
-        self._update_method(old.func, new.func)  # type: ignore
-        self._try_upgrade_readonly_attr(
-            self._CPythonStructType.PARTIALMETHOD, old, new, "args"
-        )
-        self._try_upgrade_readonly_attr(
-            self._CPythonStructType.PARTIALMETHOD, old, new, "keywords"
-        )
-
-    _MAX_REFERRERS_FOR_PATCHING = 512
-
-    def _patch_list_referrer(self, ref: List[object], old: object, new: object) -> None:
-        for i, obj in enumerate(ref):
-            if obj is old:
-                ref[i] = new
-
-    def _patch_dict_referrer(
-        self, ref: Dict[object, object], old: object, new: object
-    ) -> None:
-        # reinsert everything in the dict in iteration order, updating refs of 'old' to 'new'
-        for k, v in dict(ref).items():
-            if k is old:
-                del ref[k]
-                k = new
-            if v is old:
-                ref[k] = new
-            else:
-                ref[k] = v
-
-    def _update_generic(self, old: object, new: object) -> None:
-        if old is new:
-            return
-        old_id = id(old)
-        if old_id in self._updated_obj_ids:
-            return
-        self._updated_obj_ids.add(old_id)
-        for type_check, update in self._update_rules:
-            if type_check(old, new):
-                update(old, new)
-                break
-        if not self._patch_referrers:
-            return
-        referrers = gc.get_referrers(old)
-        if len(referrers) >= self._MAX_REFERRERS_FOR_PATCHING:
-            return
-        for typ, referrer_patcher in self._referrer_patch_rules:
-            if isinstance(referrers, typ):
-                referrer_patcher(referrers, old, new)
-                break
