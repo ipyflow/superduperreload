@@ -796,3 +796,20 @@ class TestAutoreload(Fixture):
             """,
         )
         self.shell.run_code("assert foo() == 43")
+
+    def test_referrer_patching(self):
+        mod_a, mod_a_file = self.new_module("x = {'foo'}")
+        mod_b, mod_b_file = self.new_module(f"from {mod_a} import x")
+        self.shell.run_code(f"from {mod_b} import x")
+        self.shell.run_code("assert x == {'foo'}")
+        self.write_file(mod_a_file, "x = {'bar'}")
+        self.shell.run_code("assert x == {'bar'}")
+
+    @skipif_known_failing
+    def test_referrer_patching_string(self):
+        mod_a, mod_a_file = self.new_module("x = 'foo'")
+        mod_b, mod_b_file = self.new_module(f"from {mod_a} import x")
+        self.shell.run_code(f"from {mod_b} import x")
+        self.shell.run_code("assert x == 'foo'")
+        self.write_file(mod_a_file, "x = 'bar'")
+        self.shell.run_code("assert x == 'bar'")

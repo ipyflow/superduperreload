@@ -43,7 +43,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from superduperreload.functional_reload import exec_module_for_new_dict
-from superduperreload.patching import ObjectPatcher
+from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
 
 if TYPE_CHECKING:
     from IPython import InteractiveShell
@@ -64,13 +64,16 @@ if TYPE_CHECKING:
 # This IPython module is based off code originally written by Pauli Virtanen and Thomas Heller.
 
 
+SHOULD_PATCH_REFERRERS: bool = True
+
+
 class ModuleReloader(ObjectPatcher):
     # Placeholder for indicating an attribute is not found
 
     def __init__(
         self, shell: Optional[Union["InteractiveShell", "FakeShell"]] = None
     ) -> None:
-        super().__init__()
+        super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
         self.enabled = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
@@ -204,18 +207,14 @@ class ModuleReloader(ObjectPatcher):
                 self.failed[py_filename] = pymtime
                 self.failed_modules.append(modname)
 
-    def append_obj(self, module: ModuleType, name: str, obj: object) -> bool:
-        in_module = hasattr(obj, "__module__") and obj.__module__ == module.__name__
-        if not in_module:
-            return False
-
+    def maybe_track_obj(self, module: ModuleType, name: str, obj: object) -> None:
+        if isinstance(obj, IMMUTABLE_PRIMITIVE_TYPES):
+            return
         try:
-            self.old_objects.setdefault((module.__name__, name), []).append(
-                weakref.ref(obj)
-            )
+            key = (module.__name__, name)
+            self.old_objects.setdefault(key, []).append(weakref.ref(obj))
         except TypeError:
             pass
-        return True
 
     def superduperreload(self, module: ModuleType) -> ModuleType:
         """Enhanced version of the superreload function from IPython's autoreload extension.
@@ -230,8 +229,7 @@ class ModuleReloader(ObjectPatcher):
 
         # collect old objects in the module
         for name, obj in list(module.__dict__.items()):
-            if not self.append_obj(module, name, obj):
-                continue
+            self.maybe_track_obj(module, name, obj)
 
         new_dict = exec_module_for_new_dict(module)
         # atomically update the module

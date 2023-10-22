@@ -62,7 +62,7 @@ _MAX_FIELD_SEARCH_OFFSET = 50
 _MAX_REFERRERS_FOR_PATCHING = 512
 _MAX_REFERRER_LENGTH_FOR_PATCHING = 128
 
-_ClassCallableTypes: Tuple[Type[object], ...] = (
+ClassCallableTypes: Tuple[Type[object], ...] = (
     FunctionType,
     MethodType,
     property,
@@ -70,7 +70,7 @@ _ClassCallableTypes: Tuple[Type[object], ...] = (
     functools.partialmethod,
 )
 
-_IMMUTABLE_PRIMITIVE_TYPES = (
+IMMUTABLE_PRIMITIVE_TYPES = (
     bytes,
     bytearray,
     float,
@@ -82,7 +82,7 @@ _IMMUTABLE_PRIMITIVE_TYPES = (
 
 
 class ObjectPatcher:
-    def __init__(self) -> None:
+    def __init__(self, patch_referrers: bool) -> None:
         self._patched_obj_ids: Set[int] = set()
         self._patch_rules = [
             (lambda a, b: isinstance2(a, b, type), self._patch_class),
@@ -96,8 +96,7 @@ class ObjectPatcher:
             ),
         ]
 
-        # TODO: add tests for referrer patching
-        self._patch_referrers: bool = False
+        self._patch_referrers: bool = patch_referrers
         self._referrer_patch_rules: List[Tuple[Type[Sized], Callable[..., None]]] = [
             (list, self._patch_list_referrer),
             (dict, self._patch_dict_referrer),
@@ -231,14 +230,14 @@ class ObjectPatcher:
                 # can't compare nested structures containing
                 # numpy arrays using `==`
                 pass
-            if new_obj is _NOT_FOUND and isinstance(old_obj, _ClassCallableTypes):
+            if new_obj is _NOT_FOUND and isinstance(old_obj, ClassCallableTypes):
                 # obsolete attribute: remove it
                 try:
                     delattr(old, key)
                 except (AttributeError, TypeError):
                     pass
-            elif not isinstance(old_obj, _ClassCallableTypes) or not isinstance(
-                new_obj, _ClassCallableTypes
+            elif not isinstance(old_obj, ClassCallableTypes) or not isinstance(
+                new_obj, ClassCallableTypes
             ):
                 try:
                     # prefer the old version for non-functions
@@ -252,7 +251,6 @@ class ObjectPatcher:
                 except (AttributeError, TypeError):
                     pass  # skip non-writable attributes
 
-            print("key:", key)
             self._patch_generic(old_obj, new_obj)
         for key in list(new.__dict__.keys()):
             if key not in list(old.__dict__.keys()):
@@ -330,9 +328,9 @@ class ObjectPatcher:
     def _patch_referrers_generic(self, old: object, new: object) -> None:
         if not self._patch_referrers:
             return
-        if isinstance(old, _IMMUTABLE_PRIMITIVE_TYPES):
+        if isinstance(old, IMMUTABLE_PRIMITIVE_TYPES):
             return
-        if isinstance(old, _ClassCallableTypes):
+        if isinstance(old, ClassCallableTypes):
             return
         referrers = gc.get_referrers(old)
         if len(referrers) > _MAX_REFERRERS_FOR_PATCHING:
@@ -341,6 +339,5 @@ class ObjectPatcher:
             for typ, referrer_patcher in self._referrer_patch_rules:
                 if type(referrer) is typ:
                     if len(referrer) <= _MAX_REFERRER_LENGTH_FOR_PATCHING:
-                        print("patch", type(old), old, "to", new)
                         referrer_patcher(referrer, old, new)
                     break
