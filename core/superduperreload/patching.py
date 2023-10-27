@@ -7,16 +7,14 @@ from enum import Enum
 from types import FunctionType, MethodType
 from typing import Callable, Dict, List, Optional, Set, Sized, Tuple, Type, Union
 
+from superduperreload.utils import isinstance2
+
 if sys.maxsize > 2**32:
     WORD_TYPE: Union[Type[ctypes.c_int32], Type[ctypes.c_int64]] = ctypes.c_int64
     WORD_N_BYTES = 8
 else:
     WORD_TYPE = ctypes.c_int32
     WORD_N_BYTES = 4
-
-
-def isinstance2(a, b, typ):
-    return isinstance(a, typ) and isinstance(b, typ)
 
 
 # Placeholder for indicating an attribute is not found
@@ -53,11 +51,6 @@ class _CPythonStructType(Enum):
     PARTIALMETHOD = "partialmethod"
 
 
-_FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[_CPythonStructType, Dict[str, int]] = {
-    field_type: {} for field_type in _CPythonStructType
-}
-
-
 _MAX_FIELD_SEARCH_OFFSET = 50
 _MAX_REFERRERS_FOR_PATCHING = 512
 _MAX_REFERRER_LENGTH_FOR_PATCHING = 128
@@ -82,6 +75,8 @@ IMMUTABLE_PRIMITIVE_TYPES = (
 
 
 class ObjectPatcher:
+    _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[str, Dict[str, int]] = {}
+
     def __init__(self, patch_referrers: bool) -> None:
         self._patched_obj_ids: Set[int] = set()
         self._patch_rules = [
@@ -114,7 +109,9 @@ class ObjectPatcher:
         if field_value is _NOT_FOUND:
             return -1
         if cache:
-            offset_tab = _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE[struct_type]
+            offset_tab = cls._FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE.setdefault(
+                struct_type.value, {}
+            )
         else:
             offset_tab = {}
         ret = offset_tab.get(field)
@@ -188,7 +185,6 @@ class ObjectPatcher:
         cls._try_write_readonly_attr(struct_type, old, field, new_value, offset=offset)
 
     def _patch_function(self, old, new):
-        """Upgrade the code object of a function"""
         if old is new:
             return
         for name in _FUNC_ATTRS:
@@ -223,13 +219,8 @@ class ObjectPatcher:
         for key in list(old.__dict__.keys()):
             old_obj = getattr(old, key)
             new_obj = getattr(new, key, _NOT_FOUND)
-            try:
-                if (old_obj == new_obj) is True:
-                    continue
-            except ValueError:
-                # can't compare nested structures containing
-                # numpy arrays using `==`
-                pass
+            if old_obj is new_obj:
+                continue
             if new_obj is _NOT_FOUND and isinstance(old_obj, ClassCallableTypes):
                 # obsolete attribute: remove it
                 try:
@@ -295,24 +286,6 @@ class ObjectPatcher:
             _CPythonStructType.PARTIALMETHOD, old, new, "keywords"
         )
 
-    def _patch_list_referrer(self, ref: List[object], old: object, new: object) -> None:
-        for i, obj in enumerate(list(ref)):
-            if obj is old:
-                ref[i] = new
-
-    def _patch_dict_referrer(
-        self, ref: Dict[object, object], old: object, new: object
-    ) -> None:
-        # reinsert everything in the dict in iteration order, updating refs of 'old' to 'new'
-        for k, v in dict(ref).items():
-            if k is old:
-                del ref[k]
-                k = new
-            if v is old:
-                ref[k] = new
-            else:
-                ref[k] = v
-
     def _patch_generic(self, old: object, new: object) -> None:
         if old is new:
             return
@@ -324,6 +297,26 @@ class ObjectPatcher:
             if type_check(old, new):
                 patch(old, new)
                 break
+
+    def _patch_list_referrer(self, ref: List[object], old: object, new: object) -> None:
+        for i, obj in enumerate(list(ref)):
+            if obj is old:
+                ref[i] = new
+
+    def _patch_dict_referrer(
+        self, ref: Dict[object, object], old: object, new: object
+    ) -> None:
+        # reinsert everything in the dict in iteration order, updating refs of 'old' to 'new'
+        # if hasattr(old, "__class__") and issubclass(old.__class__, Enum):
+        #     print(old, new, ref)
+        for k, v in dict(ref).items():
+            if k is old:
+                del ref[k]
+                k = new
+            if v is old:
+                ref[k] = new
+            else:
+                ref[k] = v
 
     def _patch_referrers_generic(self, old: object, new: object) -> None:
         if not self._patch_referrers:

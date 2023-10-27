@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
 from superduperreload.functional_reload import exec_module_for_new_dict
 from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
+from superduperreload.utils import print_purple
 
 if TYPE_CHECKING:
     from IPython import InteractiveShell
@@ -76,6 +77,8 @@ class ModuleReloader(ObjectPatcher):
         super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
         self.enabled = True
+        # Whether to print reloaded modules and other messages
+        self.verbose = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
         self.failed: Dict[str, float] = {}
         # Modules specially marked as not autoreloadable.
@@ -99,11 +102,12 @@ class ModuleReloader(ObjectPatcher):
         self.reloaded_modules: List[str] = []
         self.failed_modules: List[str] = []
 
-        # Reporting callable for verbosity
-        self._report = lambda msg: None  # by default, be quiet.
-
         # Cache module modification times
         self.check(do_reload=False)
+
+    def _report(self, msg: str) -> None:
+        if self.verbose:
+            print_purple(msg)
 
     def mark_module_skipped(self, module_name: str) -> None:
         """Skip reloading the named module in the future"""
