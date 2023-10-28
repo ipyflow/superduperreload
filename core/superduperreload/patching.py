@@ -79,7 +79,7 @@ class ObjectPatcher:
 
     def __init__(self, patch_referrers: bool) -> None:
         self._patched_obj_ids: Set[int] = set()
-        self._patch_rules = [
+        self._patch_rules: List[Tuple[Callable, Callable]] = [
             (lambda a, b: isinstance2(a, b, type), self._patch_class),
             (lambda a, b: isinstance2(a, b, FunctionType), self._patch_function),
             (lambda a, b: isinstance2(a, b, MethodType), self._patch_method),
@@ -184,25 +184,31 @@ class ObjectPatcher:
             offset = cls._infer_field_offset(struct_type, new, field)
         cls._try_write_readonly_attr(struct_type, old, field, new_value, offset=offset)
 
-    def _patch_function(self, old, new):
+    def _patch_function(self, old: FunctionType, new: FunctionType) -> None:
         if old is new:
             return
         for name in _FUNC_ATTRS:
+            if name == "__globals__":
+                # switch order for __globals__ since we keep the old module.__dict__
+                old, new = new, old
             try:
                 setattr(old, name, getattr(new, name))
             except (AttributeError, TypeError, ValueError):
                 self._try_patch_readonly_attr(
                     _CPythonStructType.FUNCTION, old, new, name
                 )
+            finally:
+                if name == "__globals__":
+                    old, new = new, old
 
-    def _patch_method(self, old: MethodType, new: MethodType):
+    def _patch_method(self, old: MethodType, new: MethodType) -> None:
         if old is new:
             return
         self._patch_function(old.__func__, new.__func__)
         self._try_patch_readonly_attr(_CPythonStructType.METHOD, old, new, "__self__")
 
     @classmethod
-    def _patch_instances(cls, old, new):
+    def _patch_instances(cls, old: Type[object], new: Type[object]) -> None:
         """Use garbage collector to find all instances that refer to the old
         class definition and update their __class__ to point to the new class
         definition"""
@@ -269,7 +275,7 @@ class ObjectPatcher:
     def _patch_partial(self, old: functools.partial, new: functools.partial) -> None:
         if old is new:
             return
-        self._patch_function(old.func, new.func)
+        self._patch_function(old.func, new.func)  # type: ignore
         self._try_patch_readonly_attr(_CPythonStructType.PARTIAL, old, new, "args")
         self._try_patch_readonly_attr(_CPythonStructType.PARTIAL, old, new, "keywords")
 

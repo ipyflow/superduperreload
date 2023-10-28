@@ -162,12 +162,8 @@ class ModuleReloader(ObjectPatcher):
 
         return py_filename, pymtime
 
-    def check(self, do_reload: bool = True) -> None:
-        """Check whether some modules need to be reloaded."""
-        self.reloaded_modules.clear()
-        self.failed_modules.clear()
-
-        # TODO: we should try to reload the modules in topological order
+    def _get_modules_needing_reload(self) -> Dict[str, Tuple[ModuleType, str, float]]:
+        modules_needing_reload = {}
         for modname, m in list(sys.modules.items()):
             package_components = modname.split(".")
             if any(
@@ -175,26 +171,32 @@ class ModuleReloader(ObjectPatcher):
                 for idx in range(1, len(package_components))
             ):
                 continue
-
             py_filename, pymtime = self.filename_and_mtime(m)
             if py_filename is None:
                 continue
-
-            try:
-                if pymtime <= self.modules_mtimes[modname]:
-                    continue
-            except KeyError:
-                self.modules_mtimes[modname] = pymtime
+            if pymtime <= self.modules_mtimes.setdefault(modname, pymtime):
                 continue
-            else:
-                if self.failed.get(py_filename, None) == pymtime:
-                    continue
-
+            if self.failed.get(py_filename) == pymtime:
+                continue
             self.modules_mtimes[modname] = pymtime
+            modules_needing_reload[modname] = (m, py_filename, pymtime)
+        return modules_needing_reload
 
-            if not do_reload:
-                continue
+    def check(self, do_reload: bool = True) -> None:
+        """Check whether some modules need to be reloaded."""
+        self.reloaded_modules.clear()
+        self.failed_modules.clear()
 
+        modules_needing_reload = self._get_modules_needing_reload()
+        if not do_reload:
+            return
+
+        # TODO: we should try to reload the modules in topological order
+        for modname, (
+            m,
+            py_filename,
+            pymtime,
+        ) in modules_needing_reload.items():
             # If we've reached this point, we should try to reload the module
             self._report(f"Reloading '{modname}'.")
             try:
@@ -220,6 +222,18 @@ class ModuleReloader(ObjectPatcher):
         except TypeError:
             pass
 
+    def _patch_ipyflow_symbols(self, old, new, flow_):
+        if flow_ is None:
+            return
+        if isinstance(old, IMMUTABLE_PRIMITIVE_TYPES):
+            return
+        old_id = id(old)
+        if old_id not in flow_.aliases:
+            return
+        for sym in list(flow_.aliases[old_id]):
+            sym._override_ready_liveness_cell_num = flow_.cell_counter()
+            sym.update_obj_ref(new)
+
     def superduperreload(self, module: ModuleType) -> ModuleType:
         """Enhanced version of the superreload function from IPython's autoreload extension.
 
@@ -229,6 +243,13 @@ class ModuleReloader(ObjectPatcher):
         - upgrades the code object of every old function and method
         - clears the module's namespace before reloading
         """
+        try:
+            from ipyflow import flow
+
+            flow_ = flow()
+        except:
+            flow_ = None
+
         self._patched_obj_ids.clear()
 
         # collect old objects in the module
@@ -254,6 +275,7 @@ class ModuleReloader(ObjectPatcher):
                     continue
                 self._patch_generic(old_obj, new_obj)
                 self._patch_referrers_generic(old_obj, new_obj)
+                self._patch_ipyflow_symbols(old_obj, new_obj, flow_)
 
             if new_refs:
                 self.old_objects[key] = new_refs
