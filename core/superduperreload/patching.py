@@ -307,8 +307,6 @@ class ObjectPatcher:
         self, ref: Dict[object, object], old: object, new: object
     ) -> None:
         # reinsert everything in the dict in iteration order, updating refs of 'old' to 'new'
-        # if hasattr(old, "__class__") and issubclass(old.__class__, Enum):
-        #     print(old, new, ref)
         for k, v in dict(ref).items():
             if k is old:
                 del ref[k]
