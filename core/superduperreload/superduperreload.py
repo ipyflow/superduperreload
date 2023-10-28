@@ -33,8 +33,10 @@ Some of the known remaining caveats are:
 
 __skip_doctest__ = True
 
+import logging
 import os
 import sys
+import time
 import traceback
 import weakref
 from importlib import import_module
@@ -47,6 +49,7 @@ from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
 from superduperreload.utils import print_purple
 
 if TYPE_CHECKING:
+    from ipyflow.flow import NotebookFlow
     from IPython import InteractiveShell
 
     from ..test.test_superduperreload import FakeShell
@@ -65,6 +68,9 @@ if TYPE_CHECKING:
 # This IPython module is based off code originally written by Pauli Virtanen and Thomas Heller.
 
 
+logger = logging.getLogger(__name__)
+
+
 SHOULD_PATCH_REFERRERS: bool = True
 
 
@@ -72,7 +78,9 @@ class ModuleReloader(ObjectPatcher):
     # Placeholder for indicating an attribute is not found
 
     def __init__(
-        self, shell: Optional[Union["InteractiveShell", "FakeShell"]] = None
+        self,
+        shell: Optional[Union["InteractiveShell", "FakeShell"]] = None,
+        flow: Optional["NotebookFlow"] = None,
     ) -> None:
         super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
@@ -95,10 +103,12 @@ class ModuleReloader(ObjectPatcher):
         self.old_objects: Dict[
             Tuple[str, str], List[weakref.ReferenceType[object]]
         ] = {}
-        # Module modification timestamps
-        self.modules_mtimes: Dict[str, float] = {}
+        # Module reloaded timestamps
+        self.reloaded_mtimes: Dict[str, float] = {}
         self.shell = shell
+        self.flow = flow
 
+        # mainly used for tests
         self.reloaded_modules: List[str] = []
         self.failed_modules: List[str] = []
 
@@ -174,13 +184,28 @@ class ModuleReloader(ObjectPatcher):
             py_filename, pymtime = self.filename_and_mtime(m)
             if py_filename is None:
                 continue
-            if pymtime <= self.modules_mtimes.setdefault(modname, pymtime):
+            if pymtime <= self.reloaded_mtimes.setdefault(modname, pymtime):
                 continue
             if self.failed.get(py_filename) == pymtime:
                 continue
-            self.modules_mtimes[modname] = pymtime
             modules_needing_reload[modname] = (m, py_filename, pymtime)
         return modules_needing_reload
+
+    def _watch(self, interval: float) -> None:
+        while True:
+            try:
+                modules_to_reload = self._get_modules_needing_reload()
+                # TODO:
+                #   if pymtime > reloaded mtime:
+                #     if module contents differ from last reload:
+                #       bump override liveness readiness counters of symbols aliasing top-level module items
+                #     else:
+                #       set reloaded mtime to pymtime
+                #   if pymtime == reloaded mtime:
+                #      reset liveness readiness counters of symbols aliasing top-level module items
+            except:
+                logger.exception("exception while watching files for changes")
+            time.sleep(interval)
 
     def check(self, do_reload: bool = True) -> None:
         """Check whether some modules need to be reloaded."""
@@ -201,6 +226,7 @@ class ModuleReloader(ObjectPatcher):
             self._report(f"Reloading '{modname}'.")
             try:
                 self.superduperreload(m)
+                self.reloaded_mtimes[modname] = pymtime
                 self.failed.pop(py_filename, None)
                 self.reloaded_modules.append(modname)
             except:  # noqa: E722
@@ -222,16 +248,16 @@ class ModuleReloader(ObjectPatcher):
         except TypeError:
             pass
 
-    def _patch_ipyflow_symbols(self, old, new, flow_):
-        if flow_ is None:
+    def _patch_ipyflow_symbols(self, old: object, new: object) -> None:
+        if self.flow is None:
             return
         if isinstance(old, IMMUTABLE_PRIMITIVE_TYPES):
             return
         old_id = id(old)
-        if old_id not in flow_.aliases:
+        if old_id not in self.flow.aliases:
             return
-        for sym in list(flow_.aliases[old_id]):
-            sym._override_ready_liveness_cell_num = flow_.cell_counter()
+        for sym in list(self.flow.aliases[old_id]):
+            sym._override_ready_liveness_cell_num = self.flow.cell_counter()
             sym.update_obj_ref(new)
 
     def superduperreload(self, module: ModuleType) -> ModuleType:
@@ -243,13 +269,6 @@ class ModuleReloader(ObjectPatcher):
         - upgrades the code object of every old function and method
         - clears the module's namespace before reloading
         """
-        try:
-            from ipyflow import flow
-
-            flow_ = flow()
-        except:
-            flow_ = None
-
         self._patched_obj_ids.clear()
 
         # collect old objects in the module
@@ -275,7 +294,7 @@ class ModuleReloader(ObjectPatcher):
                     continue
                 self._patch_generic(old_obj, new_obj)
                 self._patch_referrers_generic(old_obj, new_obj)
-                self._patch_ipyflow_symbols(old_obj, new_obj, flow_)
+                self._patch_ipyflow_symbols(old_obj, new_obj)
 
             if new_refs:
                 self.old_objects[key] = new_refs

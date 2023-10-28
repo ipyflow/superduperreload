@@ -104,8 +104,9 @@ class AutoreloadMagics(Magics):
     def __init__(self, *a, **kw):
         if platform.python_implementation().lower() != "cpython":
             raise RuntimeError("CPython required for superduperreload extension")
+        flow = kw.pop("flow", None)
         super().__init__(*a, **kw)
-        self._reloader = ModuleReloader(self.shell)
+        self._reloader = ModuleReloader(self.shell, flow=flow)
         self.loaded_modules = set(sys.modules)
 
     @line_magic
@@ -262,6 +263,6 @@ class AutoreloadMagics(Magics):
         for modname in newly_loaded_modules:
             _, pymtime = self._reloader.filename_and_mtime(sys.modules[modname])
             if pymtime is not None:
-                self._reloader.modules_mtimes[modname] = pymtime
+                self._reloader.reloaded_mtimes[modname] = pymtime
 
         self.loaded_modules.update(newly_loaded_modules)

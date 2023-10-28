@@ -13,7 +13,14 @@ __version__ = _version.get_versions()['version']
 
 def load_ipython_extension(ip: "InteractiveShell"):
     """Load the extension in IPython."""
-    auto_reload = AutoreloadMagics(ip)
+    try:
+        from ipyflow import flow
+
+        flow_ = flow()
+    except:
+        flow_ = None
+
+    auto_reload = AutoreloadMagics(ip, flow=flow_)
     ip.register_magics(auto_reload)
     ip.events.register("pre_run_cell", auto_reload.pre_run_cell)
     ip.events.register("post_execute", auto_reload.post_execute_hook)
