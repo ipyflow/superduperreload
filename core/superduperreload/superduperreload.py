@@ -185,7 +185,7 @@ class ModuleReloader(ObjectPatcher):
         prev_md5, prev_mtime = self.md5_cache.get(m.__name__, ("", 0))
         if prev_mtime == mtime:
             return prev_md5
-        md5 = hashlib.new("md5", usedforsecurity=False)
+        md5 = hashlib.new("md5", usedforsecurity=False)  # type: ignore
         with open(m.__file__, "rb") as f:
             md5.update(f.read() + m.__name__.encode("utf-8"))
         digest = md5.hexdigest()
