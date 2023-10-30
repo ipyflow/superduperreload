@@ -488,7 +488,7 @@ class TestAutoreload(Fixture):
         assert self.reloader.reloaded_modules == [mod_name]
 
         self.shell.magic_superduperreload("on -p")
-        self.write_file(mod_fn, mod_code)  # "modify" the module
+        self.write_file(mod_fn, mod_code + "\n")  # "modify" the module
         self.shell.run_code("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 

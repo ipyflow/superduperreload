@@ -263,6 +263,6 @@ class AutoreloadMagics(Magics):
         for modname in newly_loaded_modules:
             _, pymtime = self._reloader.filename_and_mtime(sys.modules[modname])
             if pymtime is not None:
-                self._reloader.reloaded_mtimes[modname] = pymtime
+                self._reloader.reloaded_mtime[modname] = pymtime
 
         self.loaded_modules.update(newly_loaded_modules)

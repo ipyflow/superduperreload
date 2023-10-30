@@ -263,6 +263,9 @@ class ObjectPatcher:
             return
         self._patch_class_members(old, new)
         self._patch_instances(old, new)
+        # TODO: figure out mro patching to make isinstance / issubclass checks work properly,
+        #   ideally for both the old and new version. One idea is to replace (old) with (new, old)
+        #   in the mro, but I remember running into some issues with this approach...
 
     def _patch_property(self, old: property, new: property) -> None:
         """Replace get/set/del functions of a property"""

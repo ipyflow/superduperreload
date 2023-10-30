@@ -33,6 +33,8 @@ Some of the known remaining caveats are:
 
 __skip_doctest__ = True
 
+import hashlib
+import itertools
 import logging
 import os
 import sys
@@ -41,6 +43,7 @@ import traceback
 import weakref
 from importlib import import_module
 from importlib.util import source_from_cache
+from threading import Thread
 from types import ModuleType
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -49,7 +52,7 @@ from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
 from superduperreload.utils import print_purple
 
 if TYPE_CHECKING:
-    from ipyflow.flow import NotebookFlow
+    from ipyflow import NotebookFlow
     from IPython import InteractiveShell
 
     from ..test.test_superduperreload import FakeShell
@@ -75,8 +78,6 @@ SHOULD_PATCH_REFERRERS: bool = True
 
 
 class ModuleReloader(ObjectPatcher):
-    # Placeholder for indicating an attribute is not found
-
     def __init__(
         self,
         shell: Optional[Union["InteractiveShell", "FakeShell"]] = None,
@@ -103,8 +104,11 @@ class ModuleReloader(ObjectPatcher):
         self.old_objects: Dict[
             Tuple[str, str], List[weakref.ReferenceType[object]]
         ] = {}
-        # Module reloaded timestamps
-        self.reloaded_mtimes: Dict[str, float] = {}
+        # Module reloaded timestamps / md5s
+        self.reloaded_mtime: Dict[str, float] = {}
+        self.reloaded_md5: Dict[str, str] = {}
+        # Cached md5 hashes, used to check if module is same again despite having an mtime
+        self.md5_cache: Dict[str, Tuple[str, float]] = {}
         self.shell = shell
         self.flow = flow
 
@@ -112,8 +116,13 @@ class ModuleReloader(ObjectPatcher):
         self.reloaded_modules: List[str] = []
         self.failed_modules: List[str] = []
 
+        # used for restoring ipyflow counters
+        self._cached_ipyflow_override_ready_counters: Dict[int, int] = {}
+
         # Cache module modification times
         self.check(do_reload=False)
+        if self.flow is not None:
+            Thread(target=self._watch, daemon=True).start()
 
     def _report(self, msg: str) -> None:
         if self.verbose:
@@ -172,7 +181,23 @@ class ModuleReloader(ObjectPatcher):
 
         return py_filename, pymtime
 
-    def _get_modules_needing_reload(self) -> Dict[str, Tuple[ModuleType, str, float]]:
+    def _get_current_md5(self, m: ModuleType, mtime: float) -> str:
+        prev_md5, prev_mtime = self.md5_cache.get(m.__name__, ("", 0))
+        if prev_mtime == mtime:
+            return prev_md5
+        with open(m.__file__, "rb") as f:
+            md5 = hashlib.md5(
+                f.read() + m.__name__.encode("utf-8"), usedforsecurity=False
+            ).hexdigest()
+        self.md5_cache[m.__name__] = (md5, mtime)
+        return md5
+
+    def _is_module_changed(self, m: ModuleType, mtime: float) -> bool:
+        return self._get_current_md5(m, mtime) != self.reloaded_md5[m.__name__]
+
+    def _get_modules_maybe_needing_reload(
+        self,
+    ) -> Dict[str, Tuple[ModuleType, str, float]]:
         modules_needing_reload = {}
         for modname, m in list(sys.modules.items()):
             package_components = modname.split(".")
@@ -181,29 +206,64 @@ class ModuleReloader(ObjectPatcher):
                 for idx in range(1, len(package_components))
             ):
                 continue
-            py_filename, pymtime = self.filename_and_mtime(m)
-            if py_filename is None:
+            fname, mtime = self.filename_and_mtime(m)
+            if fname is None:
                 continue
-            if pymtime <= self.reloaded_mtimes.setdefault(modname, pymtime):
+            if mtime <= self.reloaded_mtime.setdefault(modname, mtime):
                 continue
-            if self.failed.get(py_filename) == pymtime:
+            if self.failed.get(fname) == mtime:
                 continue
-            modules_needing_reload[modname] = (m, py_filename, pymtime)
+            modules_needing_reload[modname] = (m, fname, mtime)
         return modules_needing_reload
 
-    def _watch(self, interval: float) -> None:
+    def _poll_module_changes_once(self) -> None:
+        for modname, (
+            m,
+            _,
+            mtime,
+        ) in self._get_modules_maybe_needing_reload().items():
+            is_changed = self._is_module_changed(m, mtime)
+            if not is_changed:
+                self.reloaded_mtime[modname] = mtime
+            for obj in itertools.chain([m], m.__dict__.values()):
+                # TODO: skip symbols for which the original definition was in a different module
+                for sym in list(self.flow.aliases.get(id(obj), [])):
+                    should_compute_exec_schedule = True
+                    if is_changed:
+                        should_compute_exec_schedule = (
+                            sym._override_ready_liveness_cell_num
+                            < self.flow.cell_counter() + 1
+                        )
+                        if should_compute_exec_schedule:
+                            self._cached_ipyflow_override_ready_counters[
+                                id(sym)
+                            ] = sym._override_ready_liveness_cell_num
+                            sym._override_ready_liveness_cell_num = (
+                                self.flow.cell_counter() + 1
+                            )
+                    else:
+                        sym._override_ready_liveness_cell_num = (
+                            self._cached_ipyflow_override_ready_counters.get(
+                                id(sym), -1
+                            )
+                        )
+                    if should_compute_exec_schedule:
+                        # TODO: just do this once per iteration, and don't go through individual symbols
+                        sym.debounced_exec_schedule(reactive=False)
+
+    def _watch(self, interval: float = 1) -> None:
+        assert self.flow is not None
+        # TODO: register after import hook to do this for imported modules too
+        for modname, m in sys.modules.items():
+            _, mtime = self.filename_and_mtime(m)
+            try:
+                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
+            except (AttributeError, TypeError):
+                continue
         while True:
             try:
-                modules_to_reload = self._get_modules_needing_reload()
-                # TODO:
-                #   if pymtime > reloaded mtime:
-                #     if module contents differ from last reload:
-                #       bump override liveness readiness counters of symbols aliasing top-level module items
-                #     else:
-                #       set reloaded mtime to pymtime
-                #   if pymtime == reloaded mtime:
-                #      reset liveness readiness counters of symbols aliasing top-level module items
-            except:
+                self._poll_module_changes_once()
+            except:  # noqa
                 logger.exception("exception while watching files for changes")
             time.sleep(interval)
 
@@ -212,22 +272,23 @@ class ModuleReloader(ObjectPatcher):
         self.reloaded_modules.clear()
         self.failed_modules.clear()
 
-        modules_needing_reload = self._get_modules_needing_reload()
+        modules_needing_reload = self._get_modules_maybe_needing_reload()
         if not do_reload:
             return
 
         # TODO: we should try to reload the modules in topological order
-        for modname, (
-            m,
-            py_filename,
-            pymtime,
-        ) in modules_needing_reload.items():
+        for modname, (m, fname, mtime) in modules_needing_reload.items():
+            if self.flow is not None and not self._is_module_changed(m, mtime):
+                self.reloaded_mtime[modname] = mtime
+                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
+                continue
             # If we've reached this point, we should try to reload the module
             self._report(f"Reloading '{modname}'.")
             try:
                 self.superduperreload(m)
-                self.reloaded_mtimes[modname] = pymtime
-                self.failed.pop(py_filename, None)
+                self.reloaded_mtime[modname] = mtime
+                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
+                self.failed.pop(fname, None)
                 self.reloaded_modules.append(modname)
             except:  # noqa: E722
                 print(
@@ -236,7 +297,7 @@ class ModuleReloader(ObjectPatcher):
                     ),
                     file=sys.stderr,
                 )
-                self.failed[py_filename] = pymtime
+                self.failed[fname] = mtime
                 self.failed_modules.append(modname)
 
     def maybe_track_obj(self, module: ModuleType, name: str, obj: object) -> None:
@@ -253,11 +314,10 @@ class ModuleReloader(ObjectPatcher):
             return
         if isinstance(old, IMMUTABLE_PRIMITIVE_TYPES):
             return
-        old_id = id(old)
-        if old_id not in self.flow.aliases:
-            return
-        for sym in list(self.flow.aliases[old_id]):
-            sym._override_ready_liveness_cell_num = self.flow.cell_counter()
+        for sym in list(self.flow.aliases.get(id(old), [])):
+            sym._override_ready_liveness_cell_num = (
+                self._cached_ipyflow_override_ready_counters[id(sym)]
+            ) = (self.flow.cell_counter())
             sym.update_obj_ref(new)
 
     def superduperreload(self, module: ModuleType) -> ModuleType:
