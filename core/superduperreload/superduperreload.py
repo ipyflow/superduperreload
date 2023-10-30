@@ -185,12 +185,12 @@ class ModuleReloader(ObjectPatcher):
         prev_md5, prev_mtime = self.md5_cache.get(m.__name__, ("", 0))
         if prev_mtime == mtime:
             return prev_md5
+        md5 = hashlib.new("md5", usedforsecurity=False)
         with open(m.__file__, "rb") as f:
-            md5 = hashlib.md5(
-                f.read() + m.__name__.encode("utf-8"), usedforsecurity=False
-            ).hexdigest()
-        self.md5_cache[m.__name__] = (md5, mtime)
-        return md5
+            md5.update(f.read() + m.__name__.encode("utf-8"))
+        digest = md5.hexdigest()
+        self.md5_cache[m.__name__] = (digest, mtime)
+        return digest
 
     def _is_module_changed(self, m: ModuleType, mtime: float) -> bool:
         return self._get_current_md5(m, mtime) != self.reloaded_md5[m.__name__]
