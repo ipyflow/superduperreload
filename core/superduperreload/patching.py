@@ -74,11 +74,20 @@ IMMUTABLE_PRIMITIVE_TYPES = (
 )
 
 
+class UnpatchableDict(dict):
+    pass
+
+
+class UnpatchableList(list):
+    pass
+
+
 class ObjectPatcher:
     _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[str, Dict[str, int]] = {}
 
     def __init__(self, patch_referrers: bool) -> None:
         self._patched_obj_ids: Set[int] = set()
+        self._remapped_classes: Dict[Type[object], Type[object]] = UnpatchableDict()
         self._patch_rules: List[Tuple[Callable, Callable]] = [
             (lambda a, b: isinstance2(a, b, type), self._patch_class),
             (lambda a, b: isinstance2(a, b, FunctionType), self._patch_function),
@@ -170,9 +179,10 @@ class ObjectPatcher:
         old: object,
         new: object,
         field: str,
+        new_is_value: bool = False,
     ) -> None:
         old_value = getattr(old, field, _NOT_FOUND)
-        new_value = getattr(new, field, _NOT_FOUND)
+        new_value = new if new_is_value else getattr(new, field, _NOT_FOUND)
         if old_value is _NOT_FOUND or new_value is _NOT_FOUND:
             return
         elif old_value is new_value:
@@ -180,6 +190,7 @@ class ObjectPatcher:
         elif old_value is not None:
             offset = cls._infer_field_offset(struct_type, old, field)
         else:
+            assert not new_is_value
             assert new_value is not None
             offset = cls._infer_field_offset(struct_type, new, field)
         cls._try_write_readonly_attr(struct_type, old, field, new_value, offset=offset)
@@ -261,11 +272,32 @@ class ObjectPatcher:
         method code objects, and add new methods, if any"""
         if old is new:
             return
+        self._remapped_classes[old] = new
         self._patch_class_members(old, new)
         self._patch_instances(old, new)
-        # TODO: figure out mro patching to make isinstance / issubclass checks work properly,
-        #   ideally for both the old and new version. One idea is to replace (old) with (new, old)
-        #   in the mro, but I remember running into some issues with this approach...
+
+    def _patch_subclass_mros(self, old: Type[object]) -> None:
+        for cls in old.__subclasses__():
+            new_bases = []
+            for base in cls.__bases__:
+                new_bases.append(self._remapped_classes.get(base, base))
+            cls.__bases__ = tuple(new_bases)
+
+            new_mro = []
+            for base in cls.__mro__:
+                new_mro.append(self._remapped_classes.get(base, base))
+            self._try_patch_readonly_attr(
+                _CPythonStructType.CLASS,
+                cls,
+                tuple(new_mro),
+                "__mro__",
+                new_is_value=True,
+            )
+
+    def _patch_mros(self) -> None:
+        for old in self._remapped_classes.keys():
+            self._patch_subclass_mros(old)
+        self._remapped_classes.clear()
 
     def _patch_property(self, old: property, new: property) -> None:
         """Replace get/set/del functions of a property"""

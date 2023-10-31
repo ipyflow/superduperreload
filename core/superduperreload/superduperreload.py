@@ -43,7 +43,7 @@ import traceback
 import weakref
 from importlib import import_module
 from importlib.util import source_from_cache
-from threading import Thread
+from threading import Condition, Thread
 from types import ModuleType
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -118,6 +118,10 @@ class ModuleReloader(ObjectPatcher):
 
         # used for restoring ipyflow counters
         self._cached_ipyflow_override_ready_counters: Dict[int, int] = {}
+
+        # used to keep the watcher thread synchronized
+        self._reloading_condition = Condition()
+        self._is_currently_reloading = False
 
         # Cache module modification times
         self.check(do_reload=False)
@@ -225,31 +229,44 @@ class ModuleReloader(ObjectPatcher):
             is_changed = self._is_module_changed(m, mtime)
             if not is_changed:
                 self.reloaded_mtime[modname] = mtime
+            classes_to_check = set()
+            symbols_to_check = set()
             for obj in itertools.chain([m], m.__dict__.values()):
                 # TODO: skip symbols for which the original definition was in a different module
-                for sym in list(self.flow.aliases.get(id(obj), [])):
-                    should_compute_exec_schedule = True
-                    if is_changed:
-                        should_compute_exec_schedule = (
-                            sym._override_ready_liveness_cell_num
-                            < self.flow.cell_counter() + 1
-                        )
-                        if should_compute_exec_schedule:
-                            self._cached_ipyflow_override_ready_counters[
-                                id(sym)
-                            ] = sym._override_ready_liveness_cell_num
-                            sym._override_ready_liveness_cell_num = (
-                                self.flow.cell_counter() + 1
-                            )
-                    else:
-                        sym._override_ready_liveness_cell_num = (
-                            self._cached_ipyflow_override_ready_counters.get(
-                                id(sym), -1
-                            )
-                        )
+                if type(obj) is type:
+                    classes_to_check.add(obj)
+                    for subclass in obj.__subclasses__():
+                        classes_to_check.add(subclass)
+                symbols_to_check |= self.flow.aliases.get(id(obj), set())
+            for sym in self.flow.global_scope.all_symbols_this_indentation():
+                if (
+                    hasattr(sym.obj, "__class__")
+                    and sym.obj.__class__ in classes_to_check
+                ):
+                    symbols_to_check.add(sym)
+                if type(sym.obj) is type and sym.obj in classes_to_check:
+                    symbols_to_check.add(sym)
+            for sym in symbols_to_check:
+                should_compute_exec_schedule = True
+                if is_changed:
+                    should_compute_exec_schedule = (
+                        sym._override_ready_liveness_cell_num
+                        < self.flow.cell_counter() + 1
+                    )
                     if should_compute_exec_schedule:
-                        # TODO: just do this once per iteration, and don't go through individual symbols
-                        sym.debounced_exec_schedule(reactive=False)
+                        self._cached_ipyflow_override_ready_counters[
+                            id(sym)
+                        ] = sym._override_ready_liveness_cell_num
+                        sym._override_ready_liveness_cell_num = (
+                            self.flow.cell_counter() + 1
+                        )
+                else:
+                    sym._override_ready_liveness_cell_num = (
+                        self._cached_ipyflow_override_ready_counters.get(id(sym), -1)
+                    )
+                if should_compute_exec_schedule:
+                    # TODO: just do this once per iteration, and don't go through individual symbols
+                    sym.debounced_exec_schedule(reactive=False)
 
     def _watch(self, interval: float = 1) -> None:
         assert self.flow is not None
@@ -262,7 +279,10 @@ class ModuleReloader(ObjectPatcher):
                 continue
         while True:
             try:
-                self._poll_module_changes_once()
+                with self._reloading_condition:
+                    while self._is_currently_reloading:
+                        self._reloading_condition.wait()
+                    self._poll_module_changes_once()
             except:  # noqa
                 logger.exception("exception while watching files for changes")
             time.sleep(interval)
@@ -315,9 +335,6 @@ class ModuleReloader(ObjectPatcher):
         if isinstance(old, IMMUTABLE_PRIMITIVE_TYPES):
             return
         for sym in list(self.flow.aliases.get(id(old), [])):
-            sym._override_ready_liveness_cell_num = (
-                self._cached_ipyflow_override_ready_counters[id(sym)]
-            ) = (self.flow.cell_counter())
             sym.update_obj_ref(new)
 
     def superduperreload(self, module: ModuleType) -> ModuleType:
@@ -360,5 +377,7 @@ class ModuleReloader(ObjectPatcher):
                 self.old_objects[key] = new_refs
             else:
                 self.old_objects.pop(key, None)
+
+        self._patch_mros()
 
         return module

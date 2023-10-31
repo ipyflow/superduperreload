@@ -251,11 +251,17 @@ class AutoreloadMagics(Magics):
                     self.shell.push({top_name: top_module})
 
     def pre_run_cell(self):
-        if self._reloader.enabled:
+        if not self._reloader.enabled:
+            return
+        with self._reloader._reloading_condition:
+            self._reloader._is_currently_reloading = True
             try:
                 self._reloader.check()
-            except:
+            except:  # noqa
                 pass
+            finally:
+                self._reloader._is_currently_reloading = False
+                self._reloader._reloading_condition.notify()
 
     def post_execute_hook(self):
         """Cache the modification times of any modules imported in this execution"""
