@@ -43,7 +43,7 @@ import traceback
 import weakref
 from importlib import import_module
 from importlib.util import source_from_cache
-from threading import Condition, Thread
+from threading import Lock, Thread
 from types import ModuleType
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -120,8 +120,7 @@ class ModuleReloader(ObjectPatcher):
         self._cached_ipyflow_override_ready_counters: Dict[int, int] = {}
 
         # used to keep the watcher thread synchronized
-        self._reloading_condition = Condition()
-        self._is_currently_reloading = False
+        self._reloading_lock = Lock()
 
         # Cache module modification times
         self.check(do_reload=False)
@@ -279,9 +278,7 @@ class ModuleReloader(ObjectPatcher):
                 continue
         while True:
             try:
-                with self._reloading_condition:
-                    while self._is_currently_reloading:
-                        self._reloading_condition.wait()
+                with self._reloading_lock:
                     self._poll_module_changes_once()
             except:  # noqa
                 logger.exception("exception while watching files for changes")
