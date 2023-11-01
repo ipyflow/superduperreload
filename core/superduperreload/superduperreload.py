@@ -47,6 +47,8 @@ from threading import Lock, Thread
 from types import ModuleType
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
+import pyccolo as pyc
+
 from superduperreload.functional_reload import exec_module_for_new_dict
 from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
 from superduperreload.utils import print_purple
@@ -75,6 +77,16 @@ logger = logging.getLogger(__name__)
 
 
 SHOULD_PATCH_REFERRERS: bool = True
+
+
+class ImportTracer(pyc.BaseTracer):
+    def __init__(self, *args, **kwargs):
+        self._reloader: "ModuleReloader" = kwargs.pop("reloader")
+        super().__init__(*args, **kwargs)
+
+    @pyc.register_raw_handler(pyc.after_import)
+    def after_import(self, *_, module: ModuleType, **__):
+        self._reloader._handle_imported_module(module)
 
 
 class ModuleReloader(ObjectPatcher):
@@ -121,6 +133,9 @@ class ModuleReloader(ObjectPatcher):
 
         # used to keep the watcher thread synchronized
         self._reloading_lock = Lock()
+
+        self._import_tracer = ImportTracer(reloader=self)
+        self._import_tracer.enable_tracing()
 
         # Cache module modification times
         self.check(do_reload=False)
@@ -190,7 +205,7 @@ class ModuleReloader(ObjectPatcher):
             return prev_md5
         md5 = hashlib.new("md5", usedforsecurity=False)  # type: ignore
         with open(m.__file__, "rb") as f:
-            md5.update(f.read() + m.__name__.encode("utf-8"))
+            md5.update(f.read())
         digest = md5.hexdigest()
         self.md5_cache[m.__name__] = (digest, mtime)
         return digest
@@ -267,15 +282,17 @@ class ModuleReloader(ObjectPatcher):
                     # TODO: just do this once per iteration, and don't go through individual symbols
                     sym.debounced_exec_schedule(reactive=False)
 
+    def _handle_imported_module(self, m: ModuleType) -> None:
+        _, mtime = self.filename_and_mtime(m)
+        try:
+            self.reloaded_md5[m.__name__] = self._get_current_md5(m, mtime)
+        except (AttributeError, TypeError):
+            pass
+
     def _watch(self, interval: float = 1) -> None:
         assert self.flow is not None
-        # TODO: register after import hook to do this for imported modules too
-        for modname, m in sys.modules.items():
-            _, mtime = self.filename_and_mtime(m)
-            try:
-                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
-            except (AttributeError, TypeError):
-                continue
+        for m in sys.modules.values():
+            self._handle_imported_module(m)
         while True:
             try:
                 with self._reloading_lock:
