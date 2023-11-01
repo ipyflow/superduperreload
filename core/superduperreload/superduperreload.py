@@ -246,7 +246,9 @@ class ModuleReloader(ObjectPatcher):
             classes_to_check = set()
             symbols_to_check = set()
             for obj in itertools.chain([m], m.__dict__.values()):
-                # TODO: skip symbols for which the original definition was in a different module
+                # TODO: more precise way to skip symbols for which the original definition was in a different module
+                if hasattr(obj, "__module__") and obj.__module__ != m.__name__:
+                    continue
                 if type(obj) is type:
                     classes_to_check.add(obj)
                     for subclass in obj.__subclasses__():
