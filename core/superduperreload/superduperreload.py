@@ -86,7 +86,7 @@ class ImportTracer(pyc.BaseTracer):
 
     @pyc.register_raw_handler(pyc.after_import)
     def after_import(self, *_, module: ModuleType, **__):
-        self._reloader._handle_imported_module(module)
+        self._reloader.handle_module_refreshed(module)
 
 
 class ModuleReloader(ObjectPatcher):
@@ -284,17 +284,23 @@ class ModuleReloader(ObjectPatcher):
                     # TODO: just do this once per iteration, and don't go through individual symbols
                     sym.debounced_exec_schedule(reactive=False)
 
-    def _handle_imported_module(self, m: ModuleType) -> None:
-        _, mtime = self.filename_and_mtime(m)
+    def handle_module_refreshed(
+        self, m: ModuleType, mtime: Optional[float] = None
+    ) -> None:
+        if mtime is None:
+            _, mtime = self.filename_and_mtime(m)
+        if mtime is None:
+            return
         try:
+            self.reloaded_mtime[m.__name__] = mtime
             self.reloaded_md5[m.__name__] = self._get_current_md5(m, mtime)
         except (AttributeError, TypeError):
             pass
 
     def _watch(self, interval: float = 1) -> None:
         assert self.flow is not None
-        for m in sys.modules.values():
-            self._handle_imported_module(m)
+        for m in list(sys.modules.values()):
+            self.handle_module_refreshed(m)
         while True:
             try:
                 with self._reloading_lock:
@@ -314,16 +320,14 @@ class ModuleReloader(ObjectPatcher):
 
         # TODO: we should try to reload the modules in topological order
         for modname, (m, fname, mtime) in modules_needing_reload.items():
-            if self.flow is not None and not self._is_module_changed(m, mtime):
+            if not self._is_module_changed(m, mtime):
                 self.reloaded_mtime[modname] = mtime
-                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
                 continue
             # If we've reached this point, we should try to reload the module
             self._report(f"Reloading '{modname}'.")
             try:
                 self.superduperreload(m)
-                self.reloaded_mtime[modname] = mtime
-                self.reloaded_md5[modname] = self._get_current_md5(m, mtime)
+                self.handle_module_refreshed(m, mtime=mtime)
                 self.failed.pop(fname, None)
                 self.reloaded_modules.append(modname)
             except:  # noqa: E722
@@ -395,5 +399,15 @@ class ModuleReloader(ObjectPatcher):
                 self.old_objects.pop(key, None)
 
         self._patch_mros()
+
+        if (
+            self.flow is not None
+            and module.__name__ in self.flow.starred_import_modules
+        ):
+            if hasattr(module, "__all__"):
+                for name in module.__all__:
+                    self.shell.user_ns[name] = module.__dict__[name]
+            else:
+                self.shell.user_ns.update(module.__dict__)
 
         return module

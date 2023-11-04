@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for superduperreload extension.
+"""Tests for ipyflow integrations with the superduperreload extension.
 """
 # -----------------------------------------------------------------------------
 #  Copyright (c) 2012, IPython Development Team
@@ -22,9 +22,11 @@ from dataclasses import dataclass
 from io import StringIO
 
 import pytest
-from IPython.core.events import EventManager, pre_run_cell
+from ipyflow.flow import NotebookFlow
+from ipyflow.shell import IPyflowInteractiveShell
+from ipyflow.tracing.ipyflow_tracer import DataflowTracer
 
-from superduperreload import AutoreloadMagics
+from superduperreload import load_ipython_extension, make_autoreload_magics
 
 try:
     import numpy
@@ -92,31 +94,6 @@ def squish_text(text: str) -> str:
     return textwrap.dedent("\n".join(transformed_text_lines))
 
 
-class FakeShell:
-    def __init__(self):
-        self.user_ns = {}
-        self.events = EventManager(self, {"pre_run_cell", pre_run_cell})
-        self.auto_magics = AutoreloadMagics(shell=self)
-        self.events.register("pre_run_cell", self.auto_magics.pre_run_cell)
-
-    register_magics = set_hook = noop
-
-    def run_code(self, code):
-        self.events.trigger("pre_run_cell")
-        exec(code, self.user_ns)
-        self.auto_magics.post_execute_hook()
-
-    def push(self, items):
-        self.user_ns.update(items)
-
-    def magic_superduperreload(self, parameter):
-        self.auto_magics.superduperreload(parameter)
-
-    def magic_aimport(self, parameter, stream=None):
-        self.auto_magics.aimport(parameter, stream=stream)
-        self.auto_magics.post_execute_hook()
-
-
 class Fixture(unittest.TestCase):
     """Fixture for creating test module files"""
 
@@ -128,7 +105,12 @@ class Fixture(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.old_sys_path = list(sys.path)
         sys.path.insert(0, self.test_dir)
-        self.shell = FakeShell()
+        DataflowTracer.clear_instance()
+        NotebookFlow.clear_instance()
+        IPyflowInteractiveShell.clear_instance()
+        self.shell = IPyflowInteractiveShell.instance()
+        self.auto_magics = make_autoreload_magics(self.shell)
+        load_ipython_extension(self.shell, magics=self.auto_magics)
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)
@@ -138,9 +120,19 @@ class Fixture(unittest.TestCase):
         self.old_sys_path = None
         self.shell = None
 
+    def run_cell(self, code: str, should_fail: bool = False) -> None:
+        assert (not should_fail) is self.shell.run_cell(code).success
+
+    def magic_superduperreload(self, parameter):
+        self.auto_magics.superduperreload(parameter)
+
+    def magic_aimport(self, parameter, stream=None):
+        self.auto_magics.aimport(parameter, stream=stream)
+        self.auto_magics.post_execute_hook()
+
     @property
     def reloader(self):
-        return self.shell.auto_magics._reloader
+        return self.auto_magics._reloader
 
     def get_module(self):
         module_name = "tmpmod_" + "".join(random.sample(self.filename_chars, 20))
@@ -205,8 +197,8 @@ class TestAutoreload(Fixture):
                 B = 'B'
             """,
         )
-        self.shell.magic_superduperreload("on")
-        self.shell.magic_aimport(mod_name)
+        self.magic_superduperreload("on")
+        self.magic_aimport(mod_name)
         self.write_file(
             mod_fn,
             """
@@ -217,12 +209,12 @@ class TestAutoreload(Fixture):
                 C = 'C'
             """,
         )
-        self.shell.run_code("pass")  # trigger another reload
+        self.run_cell("pass")  # trigger another reload
         assert self.reloader.reloaded_modules == [mod_name]
         assert self.reloader.failed_modules == []
 
     def test_reload_class_type(self):
-        self.shell.magic_superduperreload("on")
+        self.magic_superduperreload("on")
         mod_name, mod_fn = self.new_module(
             """
             class Test():
@@ -233,8 +225,8 @@ class TestAutoreload(Fixture):
         assert "test" not in self.shell.user_ns
         assert "result" not in self.shell.user_ns
 
-        self.shell.run_code("from %s import Test" % mod_name)
-        self.shell.run_code("test = Test()")
+        self.run_cell("from %s import Test" % mod_name)
+        self.run_cell("test = Test()")
 
         self.write_file(
             mod_fn,
@@ -248,17 +240,17 @@ class TestAutoreload(Fixture):
         test_object = self.shell.user_ns["test"]
 
         # important to trigger superduperreload logic !
-        self.shell.run_code("pass")
+        self.run_cell("pass")
 
         test_class = pickle_get_current_class(test_object)
         assert isinstance(test_object, test_class)
 
         # extra check.
-        self.shell.run_code("import pickle")
-        self.shell.run_code("p = pickle.dumps(test)")
+        self.run_cell("import pickle")
+        self.run_cell("p = pickle.dumps(test)")
 
     def test_reload_class_attributes(self):
-        self.shell.magic_superduperreload("on")
+        self.magic_superduperreload("on")
         mod_name, mod_fn = self.new_module(
             """
             class MyClass:
@@ -273,16 +265,13 @@ class TestAutoreload(Fixture):
                     return self.a*self.a
             """
         )
-        self.shell.run_code("from %s import MyClass" % mod_name)
-        self.shell.run_code("first = MyClass(5)")
-        self.shell.run_code("first.square()")
-        with self.assertRaises(AttributeError):
-            self.shell.run_code("first.cube()")
-        with self.assertRaises(AttributeError):
-            self.shell.run_code("first.power(5)")
-        self.shell.run_code("first.b")
-        with self.assertRaises(AttributeError):
-            self.shell.run_code("first.toto")
+        self.run_cell("from %s import MyClass" % mod_name)
+        self.run_cell("first = MyClass(5)")
+        self.run_cell("first.square()")
+        self.run_cell("first.cube()", should_fail=True)
+        self.run_cell("first.power(5)", should_fail=True)
+        self.run_cell("first.b")
+        self.run_cell("first.toto", should_fail=True)
 
         # remove square, add power
 
@@ -301,23 +290,20 @@ class TestAutoreload(Fixture):
             """,
         )
 
-        self.shell.run_code("second = MyClass(5)")
+        self.run_cell("second = MyClass(5)")
 
         for object_name in {"first", "second"}:
-            self.shell.run_code(f"{object_name}.power(5)")
-            with self.assertRaises(AttributeError):
-                self.shell.run_code(f"{object_name}.cube()")
-            with self.assertRaises(AttributeError):
-                self.shell.run_code(f"{object_name}.square()")
-            self.shell.run_code(f"{object_name}.b")
-            self.shell.run_code(f"{object_name}.a")
-            with self.assertRaises(AttributeError):
-                self.shell.run_code(f"{object_name}.toto")
+            self.run_cell(f"{object_name}.power(5)")
+            self.run_cell(f"{object_name}.cube()", should_fail=True)
+            self.run_cell(f"{object_name}.square()", should_fail=True)
+            self.run_cell(f"{object_name}.b")
+            self.run_cell(f"{object_name}.a")
+            self.run_cell(f"{object_name}.toto", should_fail=True)
 
     if numpy is not None:
 
         def test_comparing_numpy_structures(self):
-            self.shell.magic_superduperreload("on")
+            self.magic_superduperreload("on")
             mod_name, mod_fn = self.new_module(
                 """
                 import numpy as np
@@ -326,8 +312,8 @@ class TestAutoreload(Fixture):
                          np.array((.2, .3)))
                 """
             )
-            self.shell.run_code("from %s import MyClass" % mod_name)
-            self.shell.run_code("first = MyClass()")
+            self.run_cell("from %s import MyClass" % mod_name)
+            self.run_cell("first = MyClass()")
 
             # change property `a`
             self.write_file(
@@ -340,9 +326,90 @@ class TestAutoreload(Fixture):
                 """,
             )
 
-            self.shell.run_code("pass")  # trigger another reload
+            self.run_cell("pass")  # trigger another reload
             assert self.reloader.reloaded_modules == [mod_name]
             assert self.reloader.failed_modules == []
+
+    def test_autoload_newly_added_objects(self):
+        self.magic_superduperreload("on")
+        mod_code = """
+        def func1(): pass
+        """
+        mod_name, mod_fn = self.new_module(mod_code)
+        self.run_cell(f"from {mod_name} import *")
+        self.run_cell("func1()")
+        self.run_cell("func2()", should_fail=True)
+        self.run_cell("t = Test()", should_fail=True)
+        self.run_cell("number", should_fail=True)
+
+        # ----------- TEST NEW OBJ LOADED --------------------------
+
+        new_code = """
+        def func1(): pass
+        def func2(): pass
+        class Test: pass
+        number = 0
+        from enum import Enum
+        class TestEnum(Enum):
+            A = 'a'
+        """
+        self.write_file(mod_fn, new_code)
+
+        # test function now exists in shell's namespace
+        self.run_cell("func2()")
+        # test function now exists in module's dict
+        self.run_cell(f"import sys; sys.modules['{mod_name}'].func2()")
+        # test class now exists
+        self.run_cell("t = Test()")
+        # test global built-in var now exists
+        self.run_cell("number")
+        # test the enumerations gets loaded successfully
+        self.run_cell("TestEnum.A")
+
+        # ----------- TEST NEW OBJ CAN BE CHANGED --------------------
+
+        new_code = """
+        def func1(): return 'changed'
+        def func2(): return 'changed'
+        class Test:
+            def new_func(self):
+                return 'changed'
+        number = 1
+        from enum import Enum
+        class TestEnum(Enum):
+            A = 'a'
+            B = 'added'
+        """
+        self.write_file(mod_fn, new_code)
+        self.run_cell("assert func1() == 'changed'")
+        self.run_cell("assert func2() == 'changed'")
+        self.run_cell("t = Test(); assert t.new_func() == 'changed'")
+        self.run_cell("assert number == 1")
+        if sys.version_info < (3, 12):
+            self.run_cell("assert TestEnum.B.value == 'added'")
+
+        # ----------- TEST IMPORT FROM MODULE --------------------------
+
+        new_mod_code = """
+        from enum import Enum
+        class Ext(Enum):
+            A = 'ext'
+        def ext_func():
+            return 'ext'
+        class ExtTest:
+            def meth(self):
+                return 'ext'
+        ext_int = 2
+        """
+        new_mod_name, new_mod_fn = self.new_module(new_mod_code)
+        current_mod_code = f"""
+        from {new_mod_name} import *
+        """
+        self.write_file(mod_fn, current_mod_code)
+        self.run_cell("assert Ext.A.value == 'ext'")
+        self.run_cell("assert ext_func() == 'ext'")
+        self.run_cell("t = ExtTest(); assert t.meth() == 'ext'")
+        self.run_cell("assert ext_int == 2")
 
     def test_verbose_names(self):
         # Asserts correspondence between original mode names and their verbose equivalents.
@@ -351,7 +418,7 @@ class TestAutoreload(Fixture):
             enabled: bool
 
         def is_enabled_for_mode(mode: str) -> bool:
-            self.shell.magic_superduperreload(mode)
+            self.magic_superduperreload(mode)
             return self.reloader.enabled
 
         assert is_enabled_for_mode("0") == is_enabled_for_mode("off")
@@ -363,62 +430,62 @@ class TestAutoreload(Fixture):
 
         # And an invalid mode name raises an exception.
         with self.assertRaises(ValueError):
-            self.shell.magic_superduperreload("4")
+            self.magic_superduperreload("4")
 
     def test_aimport_parsing(self):
         # Modules can be included or excluded all in one line.
-        self.shell.magic_aimport("os")  # import and mark `os` for auto-reload.
+        self.magic_aimport("os")  # import and mark `os` for auto-reload.
         assert "os" not in self.reloader.skip_modules
 
-        self.shell.magic_aimport("-math")  # forbid superduperreloading of `math`
+        self.magic_aimport("-math")  # forbid superduperreloading of `math`
         assert "math" in self.reloader.skip_modules
 
-        self.shell.magic_aimport(
+        self.magic_aimport(
             "-os, math"
         )  # Can do this all in one line; wasn't possible before.
         assert "math" not in self.reloader.skip_modules
         assert "os" in self.reloader.skip_modules
 
     def test_superduperreload_output(self):
-        self.shell.magic_superduperreload("on")
+        self.magic_superduperreload("on")
         mod_code = """
         def func1(): pass
         """
         mod_name, mod_fn = self.new_module(mod_code)
-        self.shell.run_code(f"import {mod_name}")
-        self.shell.run_code("pass")
+        self.run_cell(f"import {mod_name}")
+        self.run_cell("pass")
         assert self.reloader.reloaded_modules == []
         assert self.reloader.failed_modules == []
 
-        self.shell.magic_superduperreload("on --print")
+        self.magic_superduperreload("on --print")
         self.write_file(mod_fn, mod_code + "pass")  # "modify" the module
-        self.shell.run_code("pass")
+        self.run_cell("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_superduperreload("on -p")
+        self.magic_superduperreload("on -p")
         self.write_file(mod_fn, mod_code)  # "modify" the module
-        self.shell.run_code("pass")
+        self.run_cell("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_superduperreload("on --print --log")
+        self.magic_superduperreload("on --print --log")
         self.write_file(mod_fn, mod_code + "pass")  # "modify" the module
-        self.shell.run_code("pass")
+        self.run_cell("pass")
         assert self.reloader.reloaded_modules == [mod_name]
 
-        self.shell.magic_superduperreload("on --print --log")
+        self.magic_superduperreload("on --print --log")
         self.write_file(mod_fn, mod_code)  # "modify" the module
         with self.assertLogs(
             logger="superduperreload"
         ) as lo:  # see something printed out
-            self.shell.run_code("pass")
+            self.run_cell("pass")
         assert lo.output == [f"INFO:superduperreload:Reloading '{mod_name}'."]
 
-        self.shell.magic_superduperreload("on -l")
+        self.magic_superduperreload("on -l")
         self.write_file(mod_fn, mod_code + "pass")  # "modify" the module
         with self.assertLogs(
             logger="superduperreload"
         ) as lo:  # see something printed out
-            self.shell.run_code("pass")
+            self.run_cell("pass")
         assert lo.output == [f"INFO:superduperreload:Reloading '{mod_name}'."]
 
     def test_smoketest(self) -> None:
@@ -457,10 +524,10 @@ class TestAutoreload(Fixture):
         #
         # Import module, and mark for reloading
         #
-        self.shell.magic_superduperreload("2")
-        self.shell.run_code("import %s" % mod_name)
+        self.magic_superduperreload("2")
+        self.run_cell("import %s" % mod_name)
         stream = StringIO()
-        self.shell.magic_aimport("", stream=stream)
+        self.magic_aimport("", stream=stream)
         self.assertTrue("Modules to reload:\nall-except-skipped" in stream.getvalue())
         self.assertIn(mod_name, self.shell.user_ns)
 
@@ -503,9 +570,9 @@ class TestAutoreload(Fixture):
             """,
         )
 
-        self.shell.run_code("pass")  # trigger reload
+        self.run_cell("pass")  # trigger reload
         assert mod_name in self.reloader.failed_modules
-        self.shell.run_code("pass")  # trigger another reload
+        self.run_cell("pass")  # trigger another reload
         assert self.reloader.reloaded_modules == []
         assert self.reloader.failed_modules == []
         check_module_contents()
@@ -556,7 +623,7 @@ class TestAutoreload(Fixture):
             self.assertEqual(old_obj2.foo(), 2)
             self.assertEqual(obj2.foo(), 2)
 
-        self.shell.run_code("pass")  # trigger reload
+        self.run_cell("pass")  # trigger reload
         check_module_contents()
 
         #
@@ -564,13 +631,13 @@ class TestAutoreload(Fixture):
         #
         os.unlink(mod_fn)
 
-        self.shell.run_code("pass")  # trigger reload
+        self.run_cell("pass")  # trigger reload
         check_module_contents()
 
         #
         # Disable superduperreload and rewrite module: no reload should occur
         #
-        self.shell.magic_superduperreload("off")
+        self.magic_superduperreload("off")
 
         self.write_file(
             mod_fn,
@@ -579,16 +646,16 @@ class TestAutoreload(Fixture):
             """,
         )
 
-        self.shell.run_code("pass")  # trigger reload
-        self.shell.run_code("pass")
+        self.run_cell("pass")  # trigger reload
+        self.run_cell("pass")
         check_module_contents()
 
         #
         # Re-enable superduperreload: reload should now occur
         #
-        self.shell.magic_superduperreload("")
+        self.magic_superduperreload("")
 
-        self.shell.run_code("pass")  # trigger reload
+        self.run_cell("pass")  # trigger reload
         self.assertEqual(mod.x, -99)
 
     def test_function_decorators(self):
@@ -602,8 +669,8 @@ class TestAutoreload(Fixture):
                 return 42
             """
         )
-        self.shell.run_code(f"from {mod_name} import foo")
-        self.shell.run_code("assert foo() == 43")
+        self.run_cell(f"from {mod_name} import foo")
+        self.run_cell("assert foo() == 43")
         self.write_file(
             mod_file,
             """
@@ -611,7 +678,7 @@ class TestAutoreload(Fixture):
                 return 42
             """,
         )
-        self.shell.run_code("assert foo() == 42")
+        self.run_cell("assert foo() == 42")
         self.write_file(
             mod_file,
             """
@@ -625,7 +692,7 @@ class TestAutoreload(Fixture):
                 return 43
             """,
         )
-        self.shell.run_code("assert foo() == 45")
+        self.run_cell("assert foo() == 45")
 
     def test_method_decorators(self):
         mod_name, mod_file = self.new_module(
@@ -642,8 +709,8 @@ class TestAutoreload(Fixture):
             foo = Foo.foo
             """
         )
-        self.shell.run_code(f"from {mod_name} import foo")
-        self.shell.run_code("assert foo() == 43")
+        self.run_cell(f"from {mod_name} import foo")
+        self.run_cell("assert foo() == 43")
         self.write_file(
             mod_file,
             """
@@ -655,7 +722,7 @@ class TestAutoreload(Fixture):
             foo = Foo.foo
             """,
         )
-        self.shell.run_code("res = foo()")
+        self.run_cell("res = foo()")
         self.write_file(
             mod_file,
             """
@@ -665,9 +732,10 @@ class TestAutoreload(Fixture):
                     return 42 + id(cls)
             
             foo = Foo.foo
+            pass
             """,
         )
-        self.shell.run_code("assert foo() == res")
+        self.run_cell("assert foo() != res")
 
     def test_method_decorators_again(self):
         mod_name, mod_file = self.new_module(
@@ -684,8 +752,8 @@ class TestAutoreload(Fixture):
             foo = Foo.foo
             """
         )
-        self.shell.run_code(f"from {mod_name} import foo")
-        self.shell.run_code("assert foo() == 42")
+        self.run_cell(f"from {mod_name} import foo")
+        self.run_cell("assert foo() == 42")
         self.write_file(
             mod_file,
             """
@@ -703,21 +771,21 @@ class TestAutoreload(Fixture):
             foo = Foo.foo
             """,
         )
-        self.shell.run_code("assert foo() == 43")
+        self.run_cell("assert foo() == 43")
 
     def test_referrer_patching(self):
         mod_a, mod_a_file = self.new_module("x = {'foo'}")
         mod_b, mod_b_file = self.new_module(f"from {mod_a} import x")
-        self.shell.run_code(f"from {mod_b} import x")
-        self.shell.run_code("assert x == {'foo'}")
+        self.run_cell(f"from {mod_b} import x")
+        self.run_cell("assert x == {'foo'}")
         self.write_file(mod_a_file, "x = {'bar'}")
-        self.shell.run_code("assert x == {'bar'}")
+        self.run_cell("assert x == {'bar'}")
 
     @skipif_known_failing
     def test_referrer_patching_string(self):
         mod_a, mod_a_file = self.new_module("x = 'foo'")
         mod_b, mod_b_file = self.new_module(f"from {mod_a} import x")
-        self.shell.run_code(f"from {mod_b} import x")
-        self.shell.run_code("assert x == 'foo'")
+        self.run_cell(f"from {mod_b} import x")
+        self.run_cell("assert x == 'foo'")
         self.write_file(mod_a_file, "x = 'bar'")
-        self.shell.run_code("assert x == 'bar'")
+        self.run_cell("assert x == 'bar'")
