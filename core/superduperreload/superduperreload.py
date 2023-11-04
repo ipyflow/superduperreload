@@ -94,6 +94,7 @@ class ModuleReloader(ObjectPatcher):
         self,
         shell: Optional[Union["InteractiveShell", "FakeShell"]] = None,
         flow: Optional["NotebookFlow"] = None,
+        enable_file_watching: bool = True,
     ) -> None:
         super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
@@ -139,7 +140,7 @@ class ModuleReloader(ObjectPatcher):
 
         # Cache module modification times
         self.check(do_reload=False)
-        if self.flow is not None:
+        if self.flow is not None and enable_file_watching:
             Thread(target=self._watch, daemon=True).start()
 
     def _report(self, msg: str) -> None:
@@ -229,6 +230,7 @@ class ModuleReloader(ObjectPatcher):
                 continue
             if mtime <= self.reloaded_mtime.setdefault(modname, mtime):
                 continue
+            print(modname, m.__name__, mtime, fname, self.reloaded_mtime.get(modname))
             if self.failed.get(fname) == mtime:
                 continue
             modules_needing_reload[modname] = (m, fname, mtime)

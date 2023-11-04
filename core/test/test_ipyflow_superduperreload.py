@@ -109,7 +109,9 @@ class Fixture(unittest.TestCase):
         NotebookFlow.clear_instance()
         IPyflowInteractiveShell.clear_instance()
         self.shell = IPyflowInteractiveShell.instance()
-        self.auto_magics = make_autoreload_magics(self.shell)
+        self.auto_magics = make_autoreload_magics(
+            self.shell, enable_file_watching=False
+        )
         load_ipython_extension(self.shell, magics=self.auto_magics)
 
     def tearDown(self):
