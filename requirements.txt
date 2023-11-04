@@ -1,4 +1,3 @@
-superduperreload-core==0.0.2
+superduperreload-core==0.0.3
 ipykernel
-ipyflow-core
 ipython
