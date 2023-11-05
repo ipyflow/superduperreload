@@ -51,7 +51,7 @@ import pyccolo as pyc
 
 from superduperreload.functional_reload import exec_module_for_new_dict
 from superduperreload.patching import IMMUTABLE_PRIMITIVE_TYPES, ObjectPatcher
-from superduperreload.utils import print_purple
+from superduperreload.utils import print_purple, print_red
 
 if TYPE_CHECKING:
     from ipyflow import NotebookFlow
@@ -107,6 +107,7 @@ class ModuleReloader(ObjectPatcher):
             "__main__",
             "__mp_main__",
             "builtins",
+            "collections.abc",
             "numpy",
             "os",
             "pandas",
@@ -243,7 +244,6 @@ class ModuleReloader(ObjectPatcher):
                 continue
             if mtime <= self.reloaded_mtime.setdefault(modname, mtime):
                 continue
-            print(modname, m.__name__, mtime, fname, self.reloaded_mtime.get(modname))
             if self.failed.get(fname) == mtime:
                 continue
             modules_needing_reload[modname] = (m, fname, mtime)
@@ -339,7 +339,6 @@ class ModuleReloader(ObjectPatcher):
                 self.reloaded_mtime[modname] = mtime
                 continue
             # If we've reached this point, we should try to reload the module
-            print("reload", modname, fname, mtime, m)
             self._report(f"Reloading '{modname}'.")
             try:
                 self.superduperreload(m)
@@ -347,7 +346,7 @@ class ModuleReloader(ObjectPatcher):
                 self.failed.pop(fname, None)
                 self.reloaded_modules.append(modname)
             except:  # noqa: E722
-                print(
+                print_red(
                     "[autoreload of {} failed: {}]".format(
                         modname, traceback.format_exc(10)
                     ),
