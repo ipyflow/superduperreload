@@ -27,6 +27,7 @@ from ipyflow.shell import IPyflowInteractiveShell
 from ipyflow.tracing.ipyflow_tracer import DataflowTracer
 
 from superduperreload import load_ipython_extension, make_autoreload_magics
+from superduperreload.superduperreload import ModuleReloader
 
 try:
     import numpy
@@ -105,13 +106,12 @@ class Fixture(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         self.old_sys_path = list(sys.path)
         sys.path.insert(0, self.test_dir)
+        ModuleReloader.clear_instance()
         DataflowTracer.clear_instance()
         NotebookFlow.clear_instance()
         IPyflowInteractiveShell.clear_instance()
         self.shell = IPyflowInteractiveShell.instance()
-        self.auto_magics = make_autoreload_magics(
-            self.shell, enable_file_watching=False
-        )
+        self.auto_magics = make_autoreload_magics(self.shell)
         load_ipython_extension(self.shell, magics=self.auto_magics)
 
     def tearDown(self):

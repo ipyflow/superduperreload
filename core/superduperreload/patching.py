@@ -7,6 +7,8 @@ from enum import Enum
 from types import FunctionType, MethodType
 from typing import Callable, Dict, List, Optional, Set, Sized, Tuple, Type, Union
 
+from traitlets.config import SingletonConfigurable
+
 from superduperreload.utils import isinstance2
 
 if sys.maxsize > 2**32:
@@ -82,10 +84,11 @@ class UnpatchableList(list):
     pass
 
 
-class ObjectPatcher:
+class ObjectPatcher(SingletonConfigurable):
     _FIELD_OFFSET_LOOKUP_TABLE_BY_STRUCT_TYPE: Dict[str, Dict[str, int]] = {}
 
-    def __init__(self, patch_referrers: bool) -> None:
+    def __init__(self, patch_referrers: bool, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._patched_obj_ids: Set[int] = set()
         self._remapped_classes: Dict[Type[object], Type[object]] = UnpatchableDict()
         self._patch_rules: List[Tuple[Callable, Callable]] = [

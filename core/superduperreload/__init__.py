@@ -11,7 +11,7 @@ from . import _version
 __version__ = _version.get_versions()['version']
 
 
-def make_autoreload_magics(shell: "InteractiveShell", enable_file_watching: bool = True) -> AutoreloadMagics:
+def make_autoreload_magics(shell: "InteractiveShell") -> AutoreloadMagics:
     try:
         from ipyflow import flow
 
@@ -19,7 +19,7 @@ def make_autoreload_magics(shell: "InteractiveShell", enable_file_watching: bool
     except:
         flow_ = None
 
-    return AutoreloadMagics(shell, flow=flow_, enable_file_watching=enable_file_watching)
+    return AutoreloadMagics(shell, flow=flow_)
 
 
 def load_ipython_extension(ip: "InteractiveShell", magics: Optional[AutoreloadMagics] = None) -> None:

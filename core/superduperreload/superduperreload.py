@@ -80,12 +80,12 @@ SHOULD_PATCH_REFERRERS: bool = True
 
 
 class ImportTracer(pyc.BaseTracer):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self._reloader: "ModuleReloader" = kwargs.pop("reloader")
         super().__init__(*args, **kwargs)
 
     @pyc.register_raw_handler(pyc.after_import)
-    def after_import(self, *_, module: ModuleType, **__):
+    def after_import(self, *_, module: ModuleType, **__) -> None:
         self._reloader.handle_module_refreshed(module)
 
 
@@ -94,7 +94,6 @@ class ModuleReloader(ObjectPatcher):
         self,
         shell: Optional[Union["InteractiveShell", "FakeShell"]] = None,
         flow: Optional["NotebookFlow"] = None,
-        enable_file_watching: bool = True,
     ) -> None:
         super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
@@ -140,8 +139,22 @@ class ModuleReloader(ObjectPatcher):
 
         # Cache module modification times
         self.check(do_reload=False)
-        if self.flow is not None and enable_file_watching:
-            Thread(target=self._watch, daemon=True).start()
+        self._watcher: Optional[Thread] = None
+        self._watcher_running = False
+        if self.flow is not None:
+            self._watcher = Thread(target=self._watch, daemon=True)
+            self._watcher_running = True
+            self._watcher.start()
+
+    @classmethod
+    def clear_instance(cls) -> None:
+        if cls.initialized():
+            reloader: "ModuleReloader" = cls._instance
+            if reloader._watcher_running:
+                reloader._watcher_running = False
+                if reloader._watcher is not None:
+                    reloader._watcher.join()
+        super().clear_instance()
 
     def _report(self, msg: str) -> None:
         if self.verbose:
@@ -303,7 +316,7 @@ class ModuleReloader(ObjectPatcher):
         assert self.flow is not None
         for m in list(sys.modules.values()):
             self.handle_module_refreshed(m)
-        while True:
+        while self._watcher_running:
             try:
                 with self._reloading_lock:
                     self._poll_module_changes_once()
