@@ -339,6 +339,7 @@ class ModuleReloader(ObjectPatcher):
                 self.reloaded_mtime[modname] = mtime
                 continue
             # If we've reached this point, we should try to reload the module
+            print("reload", modname, fname, mtime, m)
             self._report(f"Reloading '{modname}'.")
             try:
                 self.superduperreload(m)
