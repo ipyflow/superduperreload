@@ -236,7 +236,7 @@ class ModuleReloader(ObjectPatcher):
             package_components = modname.split(".")
             if any(
                 ".".join(package_components[:idx]) in self.skip_modules
-                for idx in range(1, len(package_components))
+                for idx in range(1, len(package_components) + 1)
             ):
                 continue
             fname, mtime = self.filename_and_mtime(m)
