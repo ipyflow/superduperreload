@@ -45,7 +45,7 @@ from importlib import import_module
 from importlib.util import source_from_cache
 from threading import Lock, Thread
 from types import ModuleType
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union, cast
 
 import pyccolo as pyc
 
@@ -149,7 +149,7 @@ class ModuleReloader(ObjectPatcher):
     @classmethod
     def clear_instance(cls) -> None:
         if cls.initialized():
-            reloader: "ModuleReloader" = cls._instance
+            reloader: "ModuleReloader" = cast("ModuleReloader", cls._instance)
             if reloader._watcher_running:
                 reloader._watcher_running = False
                 if reloader._watcher is not None:
