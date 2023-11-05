@@ -253,7 +253,7 @@ class AutoreloadMagics(Magics):
                     # Inject module to user namespace
                     self.shell.push({top_name: top_module})
 
-    def pre_run_cell(self):
+    def pre_run_cell(self, *_, **__):
         if not self._reloader.enabled:
             return
         with self._reloader._reloading_lock:
@@ -262,7 +262,7 @@ class AutoreloadMagics(Magics):
             except:  # noqa
                 pass
 
-    def post_execute_hook(self):
+    def post_execute_hook(self, *_, **__):
         """Cache the modification times of any modules imported in this execution"""
         newly_loaded_modules = set(sys.modules) - self.loaded_modules
         for modname in newly_loaded_modules:
