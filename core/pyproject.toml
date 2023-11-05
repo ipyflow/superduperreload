@@ -24,6 +24,7 @@ extend_skip_glob = [
 ]
 
 [tool.pytest.ini_options]
+addopts = '-p no:solara'  # solara patches get_ipython which messes things up
 markers = ['integration: mark a test as an integration test.']
 filterwarnings = [
     'ignore::DeprecationWarning',
