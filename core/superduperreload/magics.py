@@ -111,7 +111,9 @@ class AutoreloadMagics(Magics):
             self._reloader.enabled = True
             self._reloader.start_watcher_thread_if_applicable()
         else:
-            self._reloader = ModuleReloader.instance(self.shell, flow=flow, enabled=True)
+            self._reloader = ModuleReloader.instance(
+                self.shell, flow=flow, enabled=True
+            )
         self.loaded_modules = set(sys.modules)
 
     @line_magic
