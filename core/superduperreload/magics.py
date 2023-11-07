@@ -106,7 +106,12 @@ class AutoreloadMagics(Magics):
             raise RuntimeError("CPython required for superduperreload extension")
         flow = kw.pop("flow", None)
         super().__init__(*a, **kw)
-        self._reloader = ModuleReloader.instance(self.shell, flow=flow)
+        if ModuleReloader.initialized():
+            self._reloader = ModuleReloader.instance()
+            self._reloader.enabled = True
+            self._reloader.start_watcher_thread_if_applicable()
+        else:
+            self._reloader = ModuleReloader.instance(self.shell, flow=flow, enabled=True)
         self.loaded_modules = set(sys.modules)
 
     @line_magic

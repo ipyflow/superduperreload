@@ -94,10 +94,11 @@ class ModuleReloader(ObjectPatcher):
         self,
         shell: Optional[Union["InteractiveShell", "FakeShell"]] = None,
         flow: Optional["NotebookFlow"] = None,
+        enabled: bool = True,
     ) -> None:
         super().__init__(patch_referrers=SHOULD_PATCH_REFERRERS)
         # Whether this reloader is enabled
-        self.enabled = True
+        self.enabled = enabled
         # Whether to print reloaded modules and other messages
         self.verbose = True
         # Modules that failed to reload: {module: mtime-on-failed-reload, ...}
@@ -142,10 +143,14 @@ class ModuleReloader(ObjectPatcher):
         self.check(do_reload=False)
         self._watcher: Optional[Thread] = None
         self._watcher_running = False
-        if self.flow is not None:
-            self._watcher = Thread(target=self._watch, daemon=True)
-            self._watcher_running = True
-            self._watcher.start()
+        self.start_watcher_thread_if_applicable()
+
+    def start_watcher_thread_if_applicable(self) -> None:
+        if self._watcher is not None or self.flow is None or not self.enabled:
+            return
+        self._watcher = Thread(target=self._watch, daemon=True)
+        self._watcher_running = True
+        self._watcher.start()
 
     @classmethod
     def clear_instance(cls) -> None:
@@ -313,9 +318,7 @@ class ModuleReloader(ObjectPatcher):
             pass
 
     def _watch(self, interval: float = 1) -> None:
-        assert self.flow is not None
-        for m in list(sys.modules.values()):
-            self.handle_module_refreshed(m)
+        assert self.enabled and self.flow is not None
         while self._watcher_running:
             try:
                 with self._reloading_lock:
