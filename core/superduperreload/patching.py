@@ -3,6 +3,7 @@ import ctypes
 import functools
 import gc
 import sys
+from collections import defaultdict
 from enum import Enum
 from types import FunctionType, MethodType
 from typing import Callable, Dict, List, Optional, Set, Sized, Tuple, Type, Union
@@ -104,9 +105,11 @@ class ObjectPatcher(SingletonConfigurable):
         ]
 
         self._patch_referrers: bool = patch_referrers
-        self._referrer_patch_rules: List[Tuple[Type[Sized], Callable[..., None]]] = [
-            (list, self._patch_list_referrer),
-            (dict, self._patch_dict_referrer),
+        self._referrer_patch_rules: List[
+            Tuple[Tuple[Type[Sized], ...], Callable[..., None]]
+        ] = [
+            ((list,), self._patch_list_referrer),
+            ((dict, defaultdict), self._patch_dict_referrer),
         ]
 
     @classmethod
@@ -371,8 +374,8 @@ class ObjectPatcher(SingletonConfigurable):
         if len(referrers) > _MAX_REFERRERS_FOR_PATCHING:
             return
         for referrer in referrers:
-            for typ, referrer_patcher in self._referrer_patch_rules:
-                if type(referrer) is typ:
+            for types, referrer_patcher in self._referrer_patch_rules:
+                if type(referrer) in types:
                     if len(referrer) <= _MAX_REFERRER_LENGTH_FOR_PATCHING:
                         referrer_patcher(referrer, old, new)
                     break
