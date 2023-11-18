@@ -231,7 +231,7 @@ class ModuleReloader(ObjectPatcher):
         return digest
 
     def _is_module_changed(self, m: ModuleType, mtime: float) -> bool:
-        return self._get_current_md5(m, mtime) != self.reloaded_md5[m.__name__]
+        return self._get_current_md5(m, mtime) != self.reloaded_md5.get(m.__name__)
 
     def _get_modules_maybe_needing_reload(
         self,
