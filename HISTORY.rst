@@ -1,7 +1,7 @@
 History
 =======
 
-0.0.5 (2023-11-17)
+0.0.6 (2023-11-17)
 --------------------
 * Misc bugfixes and improvements;
 

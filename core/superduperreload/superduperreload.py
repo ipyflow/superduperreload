@@ -247,7 +247,11 @@ class ModuleReloader(ObjectPatcher):
             fname, mtime = self.filename_and_mtime(m)
             if fname is None:
                 continue
-            if mtime <= self.reloaded_mtime.setdefault(modname, mtime):
+            reloaded_mtime = self.reloaded_mtime.get(modname)
+            if reloaded_mtime is None:
+                reloaded_mtime = mtime
+                self.handle_module_refreshed(m, mtime=mtime)
+            if mtime <= reloaded_mtime:
                 continue
             if self.failed.get(fname) == mtime:
                 continue
