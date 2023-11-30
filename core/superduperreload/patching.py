@@ -283,7 +283,11 @@ class ObjectPatcher(SingletonConfigurable):
         self._patch_instances(old, new)
 
     def _patch_subclass_mros(self, old: Type[object]) -> None:
-        for cls in old.__subclasses__():
+        try:
+            subclasses = old.__subclasses__()
+        except TypeError:
+            subclasses = old.__subclasses__(old)  # type: ignore
+        for cls in subclasses:
             new_bases = []
             for base in cls.__bases__:
                 new_bases.append(self._remapped_classes.get(base, base))
