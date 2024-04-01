@@ -221,7 +221,7 @@ class ObjectPatcher(SingletonConfigurable):
     def _patch_method(self, old: MethodType, new: MethodType) -> None:
         if old is new:
             return
-        self._patch_function(old.__func__, new.__func__)
+        self._patch_function(old.__func__, new.__func__)  # type: ignore
         self._try_patch_readonly_attr(_CPythonStructType.METHOD, old, new, "__self__")
 
     @classmethod
