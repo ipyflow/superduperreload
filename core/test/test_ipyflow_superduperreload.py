@@ -15,7 +15,6 @@ import random
 import shutil
 import sys
 import tempfile
-import textwrap
 import time
 import unittest
 from dataclasses import dataclass
@@ -28,6 +27,8 @@ from ipyflow.tracing.ipyflow_tracer import DataflowTracer
 
 from superduperreload import load_ipython_extension, make_autoreload_magics
 from superduperreload.superduperreload import ModuleReloader
+
+from .utils import squish_text
 
 try:
     import numpy
@@ -52,49 +53,6 @@ skipif_known_failing = pytest.mark.skipif(**should_skip_known_failing())
 noop = lambda *a, **kw: None
 
 
-def squish_text(text: str) -> str:
-    """
-    Turns text like this:
-
-    '''        def foo():
-    return "bar"
-            def baz():
-                return "bat"
-    def bam():
-                return "bat"
-    '''
-
-    into this:
-
-    '''def foo():
-        return "bar"
-    def baz():
-        return "bat"
-    def bam():
-        return "bat"
-    '''
-
-    The former is common when we are trying to use string templates
-    whose parameters are multiline and unaware of the existing indentation.
-
-    :param text: a string with messed up indentation
-    :return: `text` but with indentation fixed
-    """
-    prev_indentation = 0
-    transformed_text_lines = []
-    for line in text.strip("\n").splitlines():
-        line_without_indentation = line.lstrip()
-        indentation = len(line) - len(line_without_indentation)
-        if indentation == 0:
-            indentation = prev_indentation
-        else:
-            prev_indentation = indentation
-        transformed_text_lines.append(
-            textwrap.indent(line_without_indentation, " " * indentation)
-        )
-    return textwrap.dedent("\n".join(transformed_text_lines))
-
-
 class Fixture(unittest.TestCase):
     """Fixture for creating test module files"""
 
@@ -115,6 +73,8 @@ class Fixture(unittest.TestCase):
         load_ipython_extension(self.shell, magics=self.auto_magics)
 
     def tearDown(self):
+        self.shell.tracer_cleanup_pending = True
+        self.shell.run_cell("pass")
         shutil.rmtree(self.test_dir)
         sys.path = self.old_sys_path
 

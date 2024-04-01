@@ -4,5 +4,5 @@
 set -euxo pipefail
 
 pushd core
-pytest
+env PYTHONPATH="." PYCCOLO_DEV_MODE="1" pytest $@
 popd
